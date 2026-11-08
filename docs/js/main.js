@@ -7,7 +7,7 @@ import { createQueue } from './queue.js';
 import { checkReading, latestKnown } from './plausi.js';
 import { parseReading, localIsoDate, localTime, readingT, formatDate } from './format.js';
 import { renderMeter, renderIntervals, renderHints, renderQueue, renderPeriods, renderMonths, renderModel } from './render.js';
-import { renderAnalyse } from './analyse.js';
+import { renderAnalyse } from './diagramme.js'; // nicht „analyse.js“ – den Namen sperren Werbeblocker (EasyPrivacy)
 
 const $ = id => document.getElementById(id);
 const dom = Object.fromEntries(

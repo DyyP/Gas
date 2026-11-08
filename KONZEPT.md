@@ -58,6 +58,7 @@ Jahresabrechnung, 7-Tage-Vorhersage in der Prognose, ESP32-Sensor, Erinnerungen.
 | 08.11. | Sparrechner bleibt beim Modellwert (≈ 16 %/K) | Altbau-Dachgeschoss: Wärme von unten und Sonne heizen mit → Heizgrenze 12,5 °C → jedes Grad ist ein größerer Teil des Bedarfs |
 | 08.11. | Live-Zähler übernimmt den Schätzwert **nicht** ins Eingabefeld | Wunsch Nutzer: echter Stand wird selbst eingetippt |
 | 08.11. | **Fehler behoben:** Service Worker liefert die App-Hülle nur noch aus dem Cache *einer* Version (vorher „Netz zuerst, nach 3 s Cache“ je Datei → bei langsamem Netz Mischung aus alten und neuen Dateien → App startete nicht). Jede Änderung ergibt über `BUILD` (Prüfsumme, `tools/stamp.mjs`, CI prüft) eine neue sw.js; nach dem Update lädt die App einmal neu. `config.js` bleibt „Netz zuerst“. Notbremse `guard.js`: startet die App nicht binnen 8 s, holt der Service Worker die neueste Version vollständig und die Seite lädt einmal neu; klappt es dann nicht, zeigt sie den Fehlertext (Schlüssel/Warteschlange bleiben). Nicht abmelden – ohne Service Worker liefert der Browser-Cache (GitHub Pages: 10 min) wieder alte Dateien | Ausfall beim Nutzer nach dem M4-Update; Ursache im Test nachgestellt |
+| 08.11. | **Fehler behoben:** `analyse.js` → `diagramme.js` | Werbeblocker (EasyPrivacy-Regel `/analyse.js`, z. B. uBlock Origin) sperrten die Datei → App startete in Firefox nicht; Repo-Test verbietet typische Tracker-Namen |
 | 08.11. | **Backlog:** PDF-Export | Wunsch Nutzer „für später“ |
 | 08.11. | Optimierungen: nach dem Speichern keine zweite Übersichtsanfrage, beim Speichern bereits gelesene Daten weiterverwenden, `getDataRange` | Kaltstarts von Apps Script kosten bis ~15 s pro Anfrage; Übersichts-Cache erst nach Messung |
 
@@ -197,7 +198,7 @@ Ergebnis P10/P50/P90, Monatsbänder, Abschlagsempfehlung, größte Unsicherheits
 Rot: < 3 Intervalle oder < 10 % HGT-Abdeckung · Gelb: < 40 % Abdeckung oder rel. Unsicherheit a > 10 % oder
 CV > 15 % · Grün: sonst. Dazu ein Satz in Klartext.
 
-### 6.7 Analyse (M4, umgesetzt in `Insights.gs` + `docs/js/analyse.js`)
+### 6.7 Analyse (M4, umgesetzt in `Insights.gs` + `docs/js/diagramme.js`)
 
 - **Live-Zähler:** Erwartung und σ für den Zeitraum letzte Ablesung → jetzt (wie ein Ablesezeitraum), dazu m³, kWh
   und € pro Tag bei der heutigen Temperatur (Arbeitspreis + Grundpreis je Tag).
@@ -243,7 +244,7 @@ Quoten (Privatkonto): 6 min/Ausführung, 90 min Trigger/Tag, 20.000 UrlFetch/Tag
 ## 8. Frontend (`docs/`)
 
 Ansichten Erfassen · Prognose · Analyse · Einstellungen (Hash-Routing, Leiste unten mit Symbolen). ES-Module: `api`,
-`queue`, `plausi`, `format`, `storage`, `render`, `charts` (SVG-Helfer, Prognose-Diagramm, Tooltip), `analyse`
+`queue`, `plausi`, `format`, `storage`, `render`, `charts` (SVG-Helfer, Prognose-Diagramm, Tooltip), `diagramme`
 (fünf Analyse-Karten), `main`. Diagramme als SVG ohne Bibliothek; Farben über CSS-Klassen, nur die Glut-Skala als
 berechnete Farbe (CSP erlaubt keine Inline-Styles). Offline-Warteschlange (zuerst lokal speichern, dann senden; Zustände wartet/Rückfrage/
 abgelehnt; Auslöser Start, `online`, Sichtbarwerden, Knopf; Timeout 45 s wegen Kaltstarts). Service Worker:

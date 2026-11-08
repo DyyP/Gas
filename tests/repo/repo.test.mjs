@@ -41,6 +41,12 @@ test('sw.js liefert App-Dateien nur aus dem Cache der eigenen Version (keine Mis
   assert.doesNotMatch(sw, /NETWORK_TIMEOUT_MS/);
 });
 
+test('Keine Dateinamen, die Werbe-/Tracking-Blocker sperren (z. B. EasyPrivacy „/analyse.js“)', () => {
+  const bad = /analy[sz]|analytic|track|stat(s|istic)?\.|beacon|pixel|metric|telemetr|^ads?[._-]|banner|advert|counter/i;
+  const files = ['js', 'icons', '.'].flatMap(d => fs.readdirSync(path.join(root, 'docs', d)).filter(f => /\.\w+$/.test(f)));
+  for (const f of files) assert.doesNotMatch(f, bad, `docs/…/${f}`);
+});
+
 test('dist/Gaszaehler.gs ist aktuell (node tools/bundle.mjs)', () => {
   assert.equal(read('dist/Gaszaehler.gs'), bundle());
 });
