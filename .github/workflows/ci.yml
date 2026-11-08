@@ -18,6 +18,8 @@ jobs:
           node-version: 22
       - name: Bündel aktuell?
         run: node tools/bundle.mjs --check
+      - name: Service-Worker-BUILD aktuell?
+        run: node tools/stamp.mjs --check
       - name: Tests
         run: node --test "tests/**/*.test.mjs"
 

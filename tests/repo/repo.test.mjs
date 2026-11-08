@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bundle } from '../../tools/bundle.mjs';
+import { buildHash, currentBuild } from '../../tools/stamp.mjs';
 import { APP_VERSION } from '../../docs/js/version.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -27,6 +28,17 @@ test('Alle vorab gespeicherten Dateien des Service Workers existieren', () => {
   const files = [...list.matchAll(/'\.\/([^']*)'/g)].map(m => m[1]).filter(Boolean);
   assert.ok(files.length > 10);
   for (const f of files) assert.ok(fs.existsSync(path.join(root, 'docs', f)), `fehlt: docs/${f}`);
+});
+
+test('sw.js: BUILD passt zu den App-Dateien (node tools/stamp.mjs)', () => {
+  assert.equal(currentBuild(), buildHash());
+});
+
+test('sw.js liefert App-Dateien nur aus dem Cache der eigenen Version (keine Mischung alt/neu)', () => {
+  const sw = read('docs/sw.js');
+  assert.match(sw, /const CACHE = `gas-shell-\$\{VERSION\}-\$\{BUILD\}`/);
+  assert.match(sw, /cacheFirst\(req, key\)/);
+  assert.doesNotMatch(sw, /NETWORK_TIMEOUT_MS/);
 });
 
 test('dist/Gaszaehler.gs ist aktuell (node tools/bundle.mjs)', () => {

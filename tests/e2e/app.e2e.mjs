@@ -365,6 +365,22 @@ test('Altes Server-Skript wird klar gemeldet statt „keine Periode“', async (
   await context.close();
 });
 
+test('Notbremse: startet die App nicht, wird der App-Cache gelöscht und einmal neu geladen', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  let blocked = 0;
+  await context.route('**/js/main.js', route => (blocked++ === 0 ? route.fulfill({ contentType: 'text/javascript', body: 'throw new Error("kaputt")' }) : route.continue()));
+  await context.route('https://script.google.com/**', route => route.abort());
+  const page = await context.newPage();
+  await page.goto(base + '#analyse');
+  await page.waitForEvent('load', { timeout: 15000 }); // Neuladen durch guard.js nach 8 s
+  await page.waitForFunction(() => window.gasStarted === true);
+  assert.equal(blocked, 2, 'main.js nach dem Neuladen frisch geholt');
+  await page.click('#tab-analyse'); // Tabs reagieren wieder
+  await page.locator('#view-analyse').waitFor();
+  assert.equal(await page.locator('#guardMsg').count(), 0);
+  await context.close();
+});
+
 test('Service Worker: App öffnet ohne Netz (Server weg) aus dem Cache', async () => {
   const offlineServer = await startServer(0, { apiUrl: API });
   const url = `http://127.0.0.1:${offlineServer.address().port}/`;

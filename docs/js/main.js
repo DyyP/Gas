@@ -271,10 +271,11 @@ setInterval(() => {
   if (document.visibilityState === 'visible' && !dom.odo.hidden) renderMeter(dom, overview, newestPending(queue.entries()), today());
 }, 10000);
 
-// Wieder sichtbar (iOS friert Home-Bildschirm-Apps oft nur ein): Datum aktualisieren, Daten holen.
+// Wieder sichtbar (iOS friert Home-Bildschirm-Apps oft nur ein): Datum aktualisieren, Daten holen, nach Updates sehen.
 function onResume() {
   renderAll();
   if (Date.now() - lastSync > 20000) sync();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then(r => r && r.update()).catch(() => {});
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') onResume();
@@ -292,8 +293,11 @@ window.addEventListener('offline', () => setOffline(true));
 if ('serviceWorker' in navigator) {
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' }).catch(() => {});
+  // Neue Version installiert: sofort neu laden, außer du tippst gerade etwas ein (dann Hinweis mit Knopf)
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController) dom.updateBanner.hidden = false;
+    if (!hadController) return;
+    if (!dom.value.value && !dom.keyInput.value && !dom.confirmDialog.open) location.reload();
+    else dom.updateBanner.hidden = false;
   });
 }
 
@@ -309,3 +313,5 @@ setOffline(false);
 renderAll();
 if (API_URL && !getKey()) showKeyForm('');
 else sync();
+window.gasStarted = true; // für js/guard.js: App läuft
+if ($('guardMsg')) $('guardMsg').remove();

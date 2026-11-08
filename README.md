@@ -133,6 +133,7 @@ Node ≥ 22, keine npm-Abhängigkeiten (Playwright nur für Browser-Tests/Icons)
 
 ```bash
 node tools/bundle.mjs              # apps-script/src → dist/Gaszaehler.gs
+node tools/stamp.mjs               # nach Änderungen in docs/: BUILD in sw.js setzen (CI prüft)
 node --test "tests/**/*.test.mjs"  # Unit-, Backend- (mit Apps-Script-Attrappe) und Repo-Tests
 node --test tests/e2e/app.e2e.mjs  # Browser-Test mit simuliertem Server
 node tools/serve.mjs 8080          # docs/ lokal unter http://127.0.0.1:8080/

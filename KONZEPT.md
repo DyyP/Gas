@@ -57,6 +57,7 @@ Jahresabrechnung, 7-Tage-Vorhersage in der Prognose, ESP32-Sensor, Erinnerungen.
 | 08.11. | **M4 (Rückmeldung):** Monate je **Heizjahr Aug–Jul** mit Umschalter; im laufenden Heizjahr die kommenden Monate als „noch offen“ mit Normalwert (`season.months`); Prognose-Grundlage unter die Perioden | Wunsch Nutzer: Geld zuerst; Heizjahr passt zur Heizsaison |
 | 08.11. | Sparrechner bleibt beim Modellwert (≈ 16 %/K) | Altbau-Dachgeschoss: Wärme von unten und Sonne heizen mit → Heizgrenze 12,5 °C → jedes Grad ist ein größerer Teil des Bedarfs |
 | 08.11. | Live-Zähler übernimmt den Schätzwert **nicht** ins Eingabefeld | Wunsch Nutzer: echter Stand wird selbst eingetippt |
+| 08.11. | **Fehler behoben:** Service Worker liefert die App-Hülle nur noch aus dem Cache *einer* Version (vorher „Netz zuerst, nach 3 s Cache“ je Datei → bei langsamem Netz Mischung aus alten und neuen Dateien → App startete nicht). Jede Änderung ergibt über `BUILD` (Prüfsumme, `tools/stamp.mjs`, CI prüft) eine neue sw.js; nach dem Update lädt die App einmal neu. `config.js` bleibt „Netz zuerst“. Notbremse `guard.js`: startet die App nicht binnen 8 s, werden Service Worker und App-Cache gelöscht und einmal neu geladen (Schlüssel/Warteschlange bleiben) | Ausfall beim Nutzer nach dem M4-Update; Ursache im Test nachgestellt |
 | 08.11. | **Backlog:** PDF-Export | Wunsch Nutzer „für später“ |
 | 08.11. | Optimierungen: nach dem Speichern keine zweite Übersichtsanfrage, beim Speichern bereits gelesene Daten weiterverwenden, `getDataRange` | Kaltstarts von Apps Script kosten bis ~15 s pro Anfrage; Übersichts-Cache erst nach Messung |
 
@@ -246,7 +247,9 @@ Ansichten Erfassen · Prognose · Analyse · Einstellungen (Hash-Routing, Leiste
 (fünf Analyse-Karten), `main`. Diagramme als SVG ohne Bibliothek; Farben über CSS-Klassen, nur die Glut-Skala als
 berechnete Farbe (CSP erlaubt keine Inline-Styles). Offline-Warteschlange (zuerst lokal speichern, dann senden; Zustände wartet/Rückfrage/
 abgelehnt; Auslöser Start, `online`, Sichtbarwerden, Knopf; Timeout 45 s wegen Kaltstarts). Service Worker:
-Netz zuerst (3 s, Revalidierung) → sonst Cache, API unberührt, `updateViaCache: 'none'`. Datum springt über
+alle Dateien einer Version gemeinsam vorab gespeichert und nur aus diesem Cache ausgeliefert (nie gemischt),
+`config.js` Netz zuerst, API unberührt, `updateViaCache: 'none'`, Update-Prüfung beim Öffnen und Sichtbarwerden,
+danach einmal neu laden. `BUILD` = Prüfsumme der Dateien (`node tools/stamp.mjs`). Notbremse `guard.js`. Datum springt über
 Mitternacht mit, solange du es nicht selbst änderst.
 
 ---
