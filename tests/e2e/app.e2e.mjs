@@ -129,6 +129,8 @@ async function openApp({ key = KEY, serviceWorkers = 'block' } = {}) {
 }
 
 const msg = page => page.locator('#msg');
+/** Text eines Elements; geschützte Leerzeichen (in Hervorhebungen) als normale. */
+const text = async (page, sel) => (await page.textContent(sel)).replace(/\u00a0/g, ' ');
 
 test('Ersteinrichtung: Schlüssel abfragen, falscher wird abgelehnt, richtiger verbindet', async () => {
   const { context, page, problems } = await openApp({ key: null });
@@ -309,18 +311,18 @@ test('Analyse: alle fünf Karten, Tabellen aufklappbar, Tooltip per Tippen', asy
   const order = await page.$$eval('#view-analyse > .card:not([hidden])', n => n.map(x => x.id).filter(Boolean));
   assert.deepEqual(order, ['aHeat', 'aMonths', 'aDayCost', 'aCalendar', 'aSeason']);
   assert.equal(await page.locator('#aHeat circle.pt').count(), 4);
-  assert.match(await page.textContent('#aHeat'), /Je Grad kälter brauchst du 3,9 kWh mehr am Tag \(≈ 0,54 €\)/);
+  assert.match(await text(page, '#aHeat'), /Je Grad kälter brauchst du 3,9 kWh mehr am Tag \(≈ 0,54 €\)/);
   // Monate je Heizjahr: laufendes zuerst (Nov. gemessen, Dez.–Jul. noch offen), Umschalten aufs Vorjahr
-  assert.match(await page.textContent('#aMonths'), /Heizjahr 2026\/27 bisher: 88 kWh – ▼ 54 % weniger als bei Normalwetter/);
+  assert.match(await text(page, '#aMonths'), /Heizjahr 2026\/27 bisher: 88 kWh – ▼ 54 % weniger als bei Normalwetter/);
   assert.equal(await page.locator('#aMonths rect.nbar.open').count(), 6, 'Dez.–Mai als „noch offen“ (Juni/Juli normal 0 → kein Balken)');
   await page.click('#aMonths .seg button >> text=2025/26');
   assert.equal(await page.getAttribute('#aMonths .seg button >> text=2025/26', 'aria-pressed'), 'true');
-  assert.match(await page.textContent('#aMonths'), /Heizjahr 2025\/26 \(Daten ab Dez\.? 25\): 1\.076 kWh – ▼ 14 % weniger/);
+  assert.match(await text(page, '#aMonths'), /Heizjahr 2025\/26 \(Daten ab Dez\.? 25\): 1\.076 kWh – ▼ 14 % weniger/);
   assert.equal(await page.locator('#aMonths rect.nbar.open').count(), 0);
-  assert.match(await page.textContent('#aDayCost'), /Heute \(3,5\s°C\) kostet ein Tag etwa 5,38 €/);
-  assert.match(await page.textContent('#aDayCost'), /▼ 708 kWh.*▼ 100 €/s);
+  assert.match(await text(page, '#aDayCost'), /Heute \(3,5\s°C\) kostet ein Tag etwa 5,38 €/);
+  assert.match(await text(page, '#aDayCost'), /▼ 708 kWh.*▼ 100 €/s);
   assert.equal(await page.locator('#aCalendar rect.today-box').count(), 1);
-  assert.match(await page.textContent('#aSeason'), /6 %.*160 kWh.*≈ 4\.169 kWh.*am 1\. Januar 40 %, am 1\. April 93 %/s);
+  assert.match(await text(page, '#aSeason'), /6 %.*160 kWh.*≈ 4\.169 kWh.*am 1\. Januar 40 %, am 1\. April 93 %/s);
   // Tooltip: Tippen auf einen Punkt der Heizkurve, Tippen daneben schließt
   const dot = await page.locator('#aHeat circle.pt').first().boundingBox();
   await page.mouse.click(dot.x + dot.width / 2, dot.y + dot.height / 2);
