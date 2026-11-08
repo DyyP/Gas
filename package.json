@@ -1,0 +1,16 @@
+{
+  "name": "gaszaehler",
+  "private": true,
+  "type": "module",
+  "description": "Gasverbrauch erfassen und auswerten – Web-App (GitHub Pages) + Google Apps Script + Google Sheet",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "bundle": "node tools/bundle.mjs",
+    "check": "node tools/bundle.mjs --check && node --test \"tests/**/*.test.mjs\"",
+    "e2e": "node tests/e2e/app.e2e.mjs",
+    "serve": "node tools/serve.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

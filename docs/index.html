@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://script.google.com https://script.googleusercontent.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Gaszähler</title>
+  <meta name="description" content="Gasverbrauch erfassen und auswerten">
+  <meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16181b" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-title" content="Gaszähler">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>Gaszähler</h1>
+    <span id="netBadge" class="badge" hidden>offline</span>
+  </header>
+
+  <div id="updateBanner" class="banner" hidden>
+    <span>Neue Version geladen.</span>
+    <button id="reloadBtn" type="button" class="link">Neu laden</button>
+  </div>
+
+  <main>
+    <!-- Erfassen -->
+    <section id="view-erfassen" class="view" aria-labelledby="tab-erfassen">
+      <div id="setupNotice" class="card notice warn" hidden></div>
+
+      <form id="keyForm" class="card" hidden novalidate>
+        <h2>Schlüssel eingeben</h2>
+        <p class="muted">Steht im Sheet unter <b>Gaszähler → Schlüssel anzeigen</b>. Auf dem iPhone hat die Home-Bildschirm-App einen eigenen Speicher – dort einmal eingeben.</p>
+        <input type="text" name="username" value="gaszaehler" autocomplete="username" hidden>
+        <label>Schlüssel
+          <input id="keyInput" type="password" autocomplete="current-password" autocapitalize="off" spellcheck="false" required>
+        </label>
+        <p id="keyMsg" class="msg error" role="alert"></p>
+        <button type="submit">Schlüssel speichern</button>
+      </form>
+
+      <form id="readingForm" class="card" novalidate>
+        <h2>Neue Ablesung</h2>
+        <label>Datum
+          <input id="date" type="date" required>
+        </label>
+        <label>Zählerstand (m³)
+          <input id="value" inputmode="decimal" autocomplete="off" enterkeyhint="done" placeholder="z. B. 2309,567" required>
+        </label>
+        <button id="saveBtn" type="submit">Speichern</button>
+        <p id="msg" class="msg" role="status" aria-live="polite"></p>
+      </form>
+
+      <div id="queueCard" class="card" hidden>
+        <div class="row">
+          <h2 id="queueTitle">Warteschlange</h2>
+          <button id="flushBtn" type="button" class="secondary small">Jetzt senden</button>
+        </div>
+        <ul id="queueList" class="list"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Letzter Stand</h2>
+        <p id="lastText" class="big">–</p>
+        <p id="lastSub" class="muted"></p>
+        <p id="dataAge" class="muted small-text"></p>
+      </div>
+    </section>
+
+    <!-- Auswertung -->
+    <section id="view-auswertung" class="view" aria-labelledby="tab-auswertung" hidden>
+      <div class="card">
+        <h2>Zeiträume zwischen Ablesungen</h2>
+        <p class="muted small-text">kWh vorläufig – Prognose, Kosten und Diagramme folgen mit den nächsten Ausbaustufen.</p>
+        <div class="table-wrap">
+          <table id="intervalTable">
+            <thead><tr><th scope="col">Zeitraum</th><th scope="col">Tage</th><th scope="col">m³</th><th scope="col">m³/Tag</th><th scope="col">kWh/Tag</th></tr></thead>
+            <tbody id="intervalRows"></tbody>
+          </table>
+        </div>
+        <p id="intervalEmpty" class="muted" hidden>Noch keine zwei Ablesungen – Zeiträume erscheinen ab der zweiten.</p>
+      </div>
+      <div id="hintsCard" class="card" hidden>
+        <h2>Hinweise</h2>
+        <ul id="hintsList" class="list"></ul>
+      </div>
+    </section>
+
+    <!-- Einstellungen -->
+    <section id="view-einstellungen" class="view" aria-labelledby="tab-einstellungen" hidden>
+      <div class="card">
+        <h2>Verbindung</h2>
+        <dl class="facts">
+          <dt>Schlüssel</dt><dd id="keyState">–</dd>
+          <dt>Server</dt><dd id="serverState">–</dd>
+        </dl>
+        <div class="buttons">
+          <button id="testBtn" type="button" class="secondary">Verbindung testen</button>
+          <button id="changeKeyBtn" type="button" class="secondary">Schlüssel ändern</button>
+        </div>
+        <p id="testMsg" class="msg" role="status" aria-live="polite"></p>
+      </div>
+      <div class="card">
+        <h2>Über</h2>
+        <dl class="facts">
+          <dt>App-Version</dt><dd id="appVersion">–</dd>
+          <dt>Daten</dt><dd>Google Sheet „GasWerte“ – Korrekturen und Stammdaten (Tarife, Abschläge …) dort pflegen.</dd>
+        </dl>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabs" aria-label="Ansichten">
+    <a id="tab-erfassen" href="#erfassen" class="tab">Erfassen</a>
+    <a id="tab-auswertung" href="#auswertung" class="tab">Auswertung</a>
+    <a id="tab-einstellungen" href="#einstellungen" class="tab">Einstellungen</a>
+  </nav>
+
+  <dialog id="confirmDialog" aria-labelledby="confirmTitle">
+    <h2 id="confirmTitle">Stimmt der Wert?</h2>
+    <p id="confirmText"></p>
+    <div class="buttons">
+      <button type="button" id="confirmCancel" class="secondary">Korrigieren</button>
+      <button type="button" id="confirmOk">Trotzdem speichern</button>
+    </div>
+  </dialog>
+</body>
+</html>

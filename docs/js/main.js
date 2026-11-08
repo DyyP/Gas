@@ -1,0 +1,302 @@
+// Gaszähler – App-Steuerung.
+import { API_URL } from '../config.js';
+import { APP_VERSION } from './version.js';
+import { createStorage } from './storage.js';
+import { createApi, NetworkError } from './api.js';
+import { createQueue } from './queue.js';
+import { checkReading, latestKnown } from './plausi.js';
+import { parseReading, localIsoDate, localTime, readingT } from './format.js';
+import { renderLast, renderIntervals, renderHints, renderQueue } from './render.js';
+
+const $ = id => document.getElementById(id);
+const dom = Object.fromEntries(
+  [
+    'netBadge', 'updateBanner', 'reloadBtn', 'setupNotice', 'keyForm', 'keyInput', 'keyMsg', 'readingForm', 'date', 'value',
+    'saveBtn', 'msg', 'queueCard', 'queueTitle', 'flushBtn', 'queueList', 'lastText', 'lastSub', 'dataAge', 'intervalRows',
+    'intervalEmpty', 'hintsCard', 'hintsList', 'keyState', 'serverState', 'testBtn', 'changeKeyBtn', 'testMsg', 'appVersion',
+    'confirmDialog', 'confirmText', 'confirmOk', 'confirmCancel',
+  ].map(id => [id, $(id)])
+);
+
+const storage = createStorage();
+const api = createApi({ url: API_URL });
+const getKey = () => storage.get('key', '');
+const queue = createQueue({ storage, api, getKey, onChange: () => renderAll() });
+let overview = storage.get('overview', null);
+let offline = false;
+let lastSync = 0;
+let syncing = null;
+
+const today = () => localIsoDate();
+
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'ungültige URL in config.js';
+  }
+}
+
+function setMsg(node, text, kind = '') {
+  node.textContent = text;
+  node.className = `msg ${kind}`.trim();
+}
+
+function setOverview(o) {
+  if (!o) return;
+  overview = o;
+  storage.set('overview', o);
+}
+
+function setOffline(value) {
+  offline = value;
+  dom.netBadge.hidden = !(value || navigator.onLine === false);
+}
+
+/** Datumsfeld: steht auf „heute“, solange du es nicht selbst änderst (auch über Mitternacht hinweg). */
+function updateDateInput() {
+  const t = today();
+  dom.date.max = t;
+  const min = overview && overview.settings && overview.settings.minDate;
+  if (min && min > '2000-01-01') dom.date.min = min;
+  if (!dom.date.value || dom.date.value > t || dom.date.dataset.auto !== '0') {
+    dom.date.value = t;
+    dom.date.dataset.auto = '1';
+  }
+}
+
+function newestPending(entries) {
+  let best = null;
+  for (const e of entries) if (e.state !== 'rejected' && (!best || readingT(e.date, e.time) > readingT(best.date, best.time))) best = e;
+  if (!best) return null;
+  const last = overview && overview.last;
+  return { ...best, newer: !last || readingT(best.date, best.time) > readingT(last.date, last.time) };
+}
+
+function renderAll() {
+  const entries = queue.entries();
+  renderQueue(dom, entries, {
+    confirm: id => {
+      queue.confirm(id);
+      sync();
+    },
+    dismiss: id => queue.dismiss(id),
+  });
+  renderLast(dom, overview, newestPending(entries), today());
+  renderIntervals(dom.intervalRows, dom.intervalEmpty, overview ? overview.intervals : []);
+  renderHints(dom.hintsCard, dom.hintsList, overview ? overview.hints : []);
+  const key = getKey();
+  dom.keyState.textContent = key ? `gespeichert (…${key.slice(-4)})` : 'fehlt';
+  dom.serverState.textContent = API_URL ? `${hostOf(API_URL)}${offline ? ' – nicht erreichbar' : ''}` : 'noch nicht eingetragen';
+  updateDateInput();
+}
+
+function showKeyForm(message) {
+  dom.keyForm.hidden = false;
+  setMsg(dom.keyMsg, message || '', 'error');
+  if (location.hash && location.hash !== '#erfassen') location.hash = '#erfassen';
+}
+
+/** Warteschlange senden, dann Übersicht laden. Gleichzeitige Aufrufe teilen sich einen Lauf. */
+function sync() {
+  if (!API_URL || !getKey()) {
+    renderAll();
+    return Promise.resolve(null);
+  }
+  if (syncing) return syncing;
+  syncing = (async () => {
+    lastSync = Date.now();
+    const res = await queue.flush();
+    if (res.overview) setOverview(res.overview);
+    if (res.stoppedBy === 'auth') showKeyForm('Der Schlüssel ist falsch oder wurde geändert.');
+    if (res.stoppedBy === 'network') setOffline(true);
+    if (!res.stoppedBy) {
+      try {
+        const data = await api.overview(getKey());
+        setOverview(data.overview);
+        setOffline(false);
+      } catch (err) {
+        if (err.code === 'AUTH') showKeyForm('Der Schlüssel ist falsch oder wurde geändert.');
+        else if (err instanceof NetworkError) setOffline(true);
+        res.error = err;
+      }
+    }
+    return res;
+  })().finally(() => {
+    syncing = null;
+    renderAll();
+  });
+  return syncing;
+}
+
+function askConfirm(text) {
+  return new Promise(resolve => {
+    dom.confirmText.textContent = text;
+    const done = answer => {
+      dom.confirmOk.onclick = dom.confirmCancel.onclick = dom.confirmDialog.oncancel = null;
+      if (dom.confirmDialog.open) dom.confirmDialog.close();
+      resolve(answer);
+    };
+    dom.confirmOk.onclick = () => done(true);
+    dom.confirmCancel.onclick = () => done(false);
+    dom.confirmDialog.oncancel = e => {
+      e.preventDefault();
+      done(false);
+    };
+    dom.confirmDialog.showModal();
+  });
+}
+
+/** Meldung nach dem Senden für genau diese Ablesung. */
+async function reportOutcome(id, res) {
+  const sent = res && res.sent.find(s => s.id === id);
+  if (sent) return setMsg(dom.msg, sent.saved === 'duplicate' ? 'War schon gespeichert ✓' : 'Gespeichert ✓', 'ok');
+  const rejected = res && res.rejected.find(r => r.id === id);
+  if (rejected) {
+    queue.dismiss(id);
+    return setMsg(dom.msg, `Nicht gespeichert: ${rejected.message}`, 'error');
+  }
+  const entry = queue.entries().find(e => e.id === id);
+  if (entry && entry.state === 'confirm') {
+    if (await askConfirm(entry.error)) {
+      queue.confirm(id);
+      setMsg(dom.msg, 'Wird gesendet …');
+      return reportOutcome(id, await sync());
+    }
+    queue.dismiss(id);
+    return setMsg(dom.msg, 'Verworfen – bitte den Wert prüfen.', 'warn');
+  }
+  if (!getKey()) return setMsg(dom.msg, 'Lokal gespeichert – zum Senden fehlt noch der Schlüssel.', 'warn');
+  if (!API_URL) return setMsg(dom.msg, 'Lokal gespeichert – die App ist noch nicht mit dem Server verbunden.', 'warn');
+  return setMsg(dom.msg, 'Offline gespeichert – wird gesendet, sobald eine Verbindung besteht.', 'warn');
+}
+
+dom.readingForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  const date = dom.date.value;
+  const value = parseReading(dom.value.value);
+  const reading = { id: crypto.randomUUID(), date, time: date === today() ? localTime() : null, value };
+  const settings = (overview && overview.settings) || {};
+  const check = checkReading(reading, {
+    today: today(),
+    minDate: settings.minDate,
+    maxPerDay: typeof settings.maxPerDay === 'number' ? settings.maxPerDay : 20,
+    latest: latestKnown(overview && overview.last, queue.entries()),
+  });
+  if (check.error) return setMsg(dom.msg, check.error, 'error');
+  if (check.warn) {
+    if (!(await askConfirm(check.warn))) return dom.value.focus();
+    reading.confirmed = true;
+  }
+  queue.add(reading); // zuerst lokal – geht nicht verloren
+  dom.value.value = '';
+  dom.date.dataset.auto = '1';
+  dom.saveBtn.disabled = true;
+  setMsg(dom.msg, 'Wird gesendet …');
+  try {
+    await reportOutcome(reading.id, await sync());
+  } finally {
+    dom.saveBtn.disabled = false;
+  }
+});
+
+dom.date.addEventListener('input', () => {
+  dom.date.dataset.auto = dom.date.value === today() ? '1' : '0';
+});
+
+dom.keyForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  const key = dom.keyInput.value.trim();
+  if (!key) return setMsg(dom.keyMsg, 'Bitte den Schlüssel eingeben.', 'error');
+  storage.set('key', key);
+  dom.keyInput.value = '';
+  dom.keyForm.hidden = true;
+  setMsg(dom.msg, 'Verbinde …');
+  const res = await sync();
+  if (res && !res.error && !res.stoppedBy) setMsg(dom.msg, 'Verbunden ✓', 'ok');
+  else if (res && res.error && res.error.code !== 'AUTH') setMsg(dom.msg, res.error.message, 'error');
+  else setMsg(dom.msg, '');
+});
+
+dom.flushBtn.addEventListener('click', () => sync());
+dom.changeKeyBtn.addEventListener('click', () => showKeyForm(''));
+dom.reloadBtn.addEventListener('click', () => location.reload());
+
+dom.testBtn.addEventListener('click', async () => {
+  if (!API_URL) return setMsg(dom.testMsg, 'Keine API-URL eingetragen (docs/config.js).', 'error');
+  if (!getKey()) return setMsg(dom.testMsg, 'Kein Schlüssel gespeichert.', 'error');
+  setMsg(dom.testMsg, 'Teste …');
+  try {
+    const data = await api.overview(getKey());
+    setOverview(data.overview);
+    setOffline(false);
+    setMsg(dom.testMsg, `Verbindung ok – ${data.overview.readingsCount} Ablesung(en) im Sheet.`, 'ok');
+  } catch (err) {
+    if (err instanceof NetworkError) {
+      setOffline(true);
+      setMsg(
+        dom.testMsg,
+        navigator.onLine === false
+          ? 'Kein Internet.'
+          : `${err.message}. Prüfe: Web-App-URL in config.js, Bereitstellung mit Zugriff „Jeder“, Internetverbindung.`,
+        'error'
+      );
+    } else {
+      if (err.code === 'AUTH') showKeyForm('Der Schlüssel ist falsch oder wurde geändert.');
+      setMsg(dom.testMsg, err.message, 'error');
+    }
+  }
+  renderAll();
+});
+
+// Ansichten über den Hash (#erfassen, #auswertung, #einstellungen)
+const VIEWS = ['erfassen', 'auswertung', 'einstellungen'];
+function route() {
+  const name = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'erfassen';
+  for (const v of VIEWS) {
+    $(`view-${v}`).hidden = v !== name;
+    const tab = $(`tab-${v}`);
+    if (v === name) tab.setAttribute('aria-current', 'page');
+    else tab.removeAttribute('aria-current');
+  }
+}
+window.addEventListener('hashchange', route);
+
+// Wieder sichtbar (iOS friert Home-Bildschirm-Apps oft nur ein): Datum aktualisieren, Daten holen.
+function onResume() {
+  renderAll();
+  if (Date.now() - lastSync > 20000) sync();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') onResume();
+});
+window.addEventListener('pageshow', e => {
+  if (e.persisted) onResume();
+});
+window.addEventListener('online', () => {
+  setOffline(false);
+  sync();
+});
+window.addEventListener('offline', () => setOffline(true));
+
+// Service Worker: App-Hülle offline verfügbar
+if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' }).catch(() => {});
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) dom.updateBanner.hidden = false;
+  });
+}
+
+// Start
+dom.appVersion.textContent = APP_VERSION;
+route();
+if (!API_URL) {
+  dom.setupNotice.hidden = false;
+  dom.setupNotice.textContent =
+    'Die App ist noch nicht mit dem Server verbunden: In docs/config.js die Web-App-URL (…/exec) eintragen – siehe README, Schritt „Einrichtung“. Ablesungen werden bis dahin lokal gespeichert.';
+}
+setOffline(false);
+renderAll();
+if (API_URL && !getKey()) showKeyForm('');
+else sync();
