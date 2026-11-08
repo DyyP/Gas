@@ -5,7 +5,7 @@
 // macht jede Änderung an der App zu einer neuen sw.js → neuer Cache → die App lädt einmal neu.
 // Ausnahme config.js: Netz zuerst (die URL wird direkt auf GitHub geändert). Anfragen an Google fasst er nicht an.
 const VERSION = '1.2.1-m4'; // = APP_VERSION in js/version.js (wird getestet)
-const BUILD = '31cc4051b29f'; // Prüfsumme der Dateien – wird von tools/stamp.mjs gesetzt (CI prüft)
+const BUILD = 'd659d4292c95'; // Prüfsumme der Dateien – wird von tools/stamp.mjs gesetzt (CI prüft)
 const CACHE = `gas-shell-${VERSION}-${BUILD}`;
 const SHELL = [
   './',
