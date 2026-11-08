@@ -28,7 +28,7 @@ function normalizeReadingInput_(input, meter) {
 /**
  * Entscheidet, ob eine neue Ablesung gespeichert wird. Ein Stand pro Tag und Zähler: gleicher Tag + gleicher
  * Wert = Duplikat (wiederholtes Senden ist damit immer sicher), anderer Wert = Konflikt.
- * ctx: { today, minDate, maxPerDay } · Rückgabe { status: 'new' | 'duplicate' } oder wirft.
+ * ctx: { today, minDate, maxPerDay, expect?(before, r) → {mean, sd} } · Rückgabe { status: 'new' | 'duplicate' } oder wirft.
  */
 function checkNewReading_(r, readings, ctx) {
   const same = readings.filter(x => x.meter === r.meter).sort((a, b) => a.t - b.t);
@@ -69,6 +69,17 @@ function checkNewReading_(r, readings, ctx) {
           { perDay: round_(c.perDay, 2), maxPerDay: ctx.maxPerDay, refDate: c.ref.date }
         );
       }
+    }
+    // Mit Modell: Abweichung vom erwarteten Verbrauch seit der letzten Ablesung (mind. 2 m³ oder 3 σ)
+    const e = before && ctx.expect ? ctx.expect(before, r) : null;
+    const dv = before ? r.value - before.value : 0;
+    if (e && Math.abs(dv - e.mean) > Math.max(3 * e.sd, 2)) {
+      throw apiError_(
+        'PLAUSIBILITY',
+        'Seit dem ' + deDate_(before.date) + ' wären etwa ' + deNum_(e.mean, 1) + ' m³ zu erwarten, eingegeben sind ' + deNum_(dv, 1) +
+          ' m³. Stimmt der Wert?',
+        { expected: round_(e.mean, 2), entered: round_(dv, 3), refDate: before.date }
+      );
     }
   }
   return { status: 'new' };

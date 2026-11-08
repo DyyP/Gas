@@ -72,29 +72,41 @@ function fail_(code, message, details) {
   return { ok: false, v: API_VERSION, error: error };
 }
 
-/** Speichert eine Ablesung unter Sperre (keine zwei Schreibvorgänge gleichzeitig). */
+/**
+ * Speichert eine Ablesung unter Sperre (keine zwei Schreibvorgänge gleichzeitig). Jeder Tab wird nur einmal
+ * gelesen: dieselben Eingaben dienen der Prüfung (inkl. Modell) und danach der neuen Übersicht.
+ */
 function addReadingAction_(ss, input) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw apiError_('BUSY', 'Server ist gerade beschäftigt – bitte gleich nochmal.');
   try {
-    const settings = readSettings_(ss);
-    const readings = readReadings_(ss);
-    const s = settings.values;
+    const inp = readInputs_(ss);
+    const s = inp.settings.values;
     const r = normalizeReadingInput_(input, s.Zähler_aktuell);
-    const res = checkNewReading_(r, readings.readings, {
-      today: Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd'),
+    const before = computeFromInputs_(inp);
+    const res = checkNewReading_(r, inp.readings.readings, {
+      today: before.today,
       minDate: s.Mindestdatum,
       maxPerDay: s.Plausi_max_m3_pro_Tag,
+      expect: modelExpectation_(before.result),
     });
-    let pre = { settings: settings, readings: readings };
-    if (res.status === 'new') {
-      const row = appendReading_(ss, r, readings.readings);
-      SpreadsheetApp.flush(); // laut Doku vor dem Freigeben der Sperre
-      // Schon Gelesenes weiterverwenden; nach Sortierung (Nachtrag) stimmen die Zeilennummern nicht mehr → neu lesen
-      pre = row ? { settings: settings, readings: { readings: readings.readings.concat([Object.assign({ row: row, exclude: false }, r)]), hints: readings.hints } } : null;
-    }
-    return { saved: res.status, overview: buildOverview_(ss, pre) };
+    if (res.status !== 'new') return { saved: res.status, overview: buildOverview_(ss, before) };
+    const row = appendReading_(ss, r, inp.readings.readings);
+    SpreadsheetApp.flush(); // laut Doku vor dem Freigeben der Sperre
+    if (row) inp.readings.readings.push(Object.assign({ row: row, exclude: false }, r));
+    else inp.readings = readReadings_(ss); // nachgetragen und sortiert → Zeilennummern neu lesen
+    return { saved: 'new', overview: buildOverview_(ss, computeFromInputs_(inp)) };
   } finally {
     lock.releaseLock();
   }
+}
+
+/** Erwartung aus dem Modell für einen neuen Zeitraum (nur bei brauchbarem Modell). */
+function modelExpectation_(result) {
+  const m = result.model;
+  if (!m || result.rating.level === 'rot') return null;
+  return (before, r) => {
+    const days = pairDays_({ a: before, b: r }, result.temps);
+    return days ? predictPair_(m, days, r.t - before.t) : null;
+  };
 }

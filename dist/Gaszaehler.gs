@@ -12,7 +12,7 @@
  */
 
 const API_VERSION = 1;
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const TZ = 'Europe/Berlin';
 const MIN_DATE = '2000-01-01';
 const DEFAULT_MINUTES = 12 * 60; // Ablesung ohne Uhrzeit gilt als 12:00
@@ -298,7 +298,9 @@ function settingDefs_() {
     { key: 'Platzhalter_Brennwert_kWh_m3', type: 'number', value: 11.3, text: 'Gilt, solange der Tab „Umrechnung“ leer ist' },
     { key: 'DWD_Station', type: 'text', value: '05906', text: 'DWD-Stationsnummer (05906 = Mannheim)' },
     { key: 'Wetter_ab', type: 'date', value: '2020-01-01', text: 'Wetterdaten und Normalwerte ab diesem Datum' },
-    { key: 'Heizgrenze_C', type: 'number', value: 15, text: 'Tagesmittel, ab dem nicht mehr geheizt wird (für Heizgradtage)' },
+    { key: 'Heizgrenze_C', type: 'number', value: 15, text: 'Tagesmittel, ab dem nicht mehr geheizt wird – gilt, wenn Heizgrenze_aus_Daten = nein oder zu wenig Daten' },
+    { key: 'Heizgrenze_aus_Daten', type: 'text', value: 'ja', text: '„ja“: Heizgrenze 10–18 °C aus deinen Ablesungen schätzen (ab 6 Zeiträumen) · „nein“: Heizgrenze_C verwenden' },
+    { key: 'Unsicherheit_Umrechnung_Prozent', type: 'number', value: 3, text: 'Unsicherheit von Brennwert × Zustandszahl in der Prognose, solange nicht aus der Rechnung' },
     { key: 'Raumtemperatur_C', type: 'number', value: 20, text: 'Für die Gradtagzahl G20/15 (VDI 3807)' },
     { key: 'Grundpreis_Verteilung', type: 'text', value: 'Jahr', text: '„Jahr“: Monatspreis × 12 / 365 je Tag · „Kalendermonat“: Monatspreis / Tage des Monats' },
   ];
@@ -336,7 +338,7 @@ function normalizeReadingInput_(input, meter) {
 /**
  * Entscheidet, ob eine neue Ablesung gespeichert wird. Ein Stand pro Tag und Zähler: gleicher Tag + gleicher
  * Wert = Duplikat (wiederholtes Senden ist damit immer sicher), anderer Wert = Konflikt.
- * ctx: { today, minDate, maxPerDay } · Rückgabe { status: 'new' | 'duplicate' } oder wirft.
+ * ctx: { today, minDate, maxPerDay, expect?(before, r) → {mean, sd} } · Rückgabe { status: 'new' | 'duplicate' } oder wirft.
  */
 function checkNewReading_(r, readings, ctx) {
   const same = readings.filter(x => x.meter === r.meter).sort((a, b) => a.t - b.t);
@@ -377,6 +379,17 @@ function checkNewReading_(r, readings, ctx) {
           { perDay: round_(c.perDay, 2), maxPerDay: ctx.maxPerDay, refDate: c.ref.date }
         );
       }
+    }
+    // Mit Modell: Abweichung vom erwarteten Verbrauch seit der letzten Ablesung (mind. 2 m³ oder 3 σ)
+    const e = before && ctx.expect ? ctx.expect(before, r) : null;
+    const dv = before ? r.value - before.value : 0;
+    if (e && Math.abs(dv - e.mean) > Math.max(3 * e.sd, 2)) {
+      throw apiError_(
+        'PLAUSIBILITY',
+        'Seit dem ' + deDate_(before.date) + ' wären etwa ' + deNum_(e.mean, 1) + ' m³ zu erwarten, eingegeben sind ' + deNum_(dv, 1) +
+          ' m³. Stimmt der Wert?',
+        { expected: round_(e.mean, 2), entered: round_(dv, 3), refDate: before.date }
+      );
     }
   }
   return { status: 'new' };
@@ -454,6 +467,145 @@ function buildIntervals_(pairs, conversions, placeholder) {
     .reverse();
 }
 
+// ===== Model.gs =====
+
+/**
+ * Model.gs – Verbrauchsmodell (rein, in Node testbar).
+ *
+ *   V_i = a · H_i(θ) + b · D_i + ε_i,   Var(ε_i) = σ² · D_i
+ *   V_i: m³ im Ablesezeitraum i · D_i: Länge in Tagen · H_i(θ) = Σ Anteil_d · max(0, θ − Tm_d)
+ *   a: m³ je Heizgradtag (Zustand der Wohnung) · b: Grundlast m³/Tag (≥ 0) · θ: Heizgrenze
+ * Gewichtete kleinste Quadrate (Gewicht 1/D_i), geschlossene Form. θ wird aus den Daten geschätzt
+ * (Raster 10–18 °C) oder aus den Einstellungen genommen.
+ */
+
+const THETA_GRID = [10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 14.5, 15, 15.5, 16, 16.5, 17, 17.5, 18];
+const MIN_INTERVALS = 3;
+
+/** Gewichtete Regression y = a·h + b·d (Gewicht 1/d) mit b ≥ 0. obs: [{y, h, d}]. */
+function wls_(obs) {
+  let shh = 0, shd = 0, sdd = 0, shy = 0, sdy = 0, sy = 0;
+  for (const o of obs) {
+    shh += (o.h * o.h) / o.d;
+    shd += o.h;
+    sdd += o.d;
+    shy += (o.h * o.y) / o.d;
+    sdy += o.y;
+    sy += o.y;
+  }
+  if (shh <= 1e-12) return null;
+  const det = shh * sdd - shd * shd;
+  let a = shy / shh;
+  let b = 0;
+  let p = 1;
+  if (det > 1e-9 * shh * sdd) {
+    const a2 = (shy * sdd - shd * sdy) / det;
+    const b2 = (shh * sdy - shd * shy) / det;
+    if (b2 >= 0) {
+      a = a2;
+      b = b2;
+      p = 2;
+    }
+  }
+  let sse = 0;
+  for (const o of obs) sse += Math.pow(o.y - a * o.h - b * o.d, 2) / o.d;
+  const dof = Math.max(1, obs.length - p);
+  const s2 = sse / dof;
+  const cov = p === 2 ? { aa: (s2 * sdd) / det, ab: (-s2 * shd) / det, bb: (s2 * shh) / det } : { aa: s2 / shh, ab: 0, bb: 0 };
+  return { a: a, b: b, p: p, sse: sse, s2: s2, dof: dof, cov: cov, n: obs.length, sumD: sdd, sumY: sy, sumH: shd };
+}
+
+/** Heizgradtage eines Zeitraums bei Heizgrenze θ aus den Tagesanteilen. */
+function hgtOf_(days, theta) {
+  let h = 0;
+  for (const x of days) h += x.f * Math.max(0, theta - x.tm);
+  return h;
+}
+
+/** Tagesanteile [{iso, f, tm}] eines Ablesepaars; null, wenn eine Temperatur fehlt. */
+function pairDays_(p, temps) {
+  const days = [];
+  for (let d = Math.floor(p.a.t); d < p.b.t; d++) {
+    const f = Math.min(p.b.t, d + 1) - Math.max(p.a.t, d);
+    if (f <= 1e-9) continue;
+    const iso = isoFromDayNumber_(d);
+    const tm = temps[iso] ? temps[iso].tm : null;
+    if (tm === null) return null;
+    days.push({ iso: iso, f: f, tm: tm });
+  }
+  return days;
+}
+
+/**
+ * Passt das Modell an. Rückgabe null (zu wenig Daten) oder
+ * { a, b, theta, thetaSource, s2, cov, dof, n, excluded, coverage, cv, relSeA }.
+ * normalYearHgt(θ): normale Jahres-HGT bei θ (für die Abdeckung).
+ */
+function fitModel_(pairs, temps, settings, normalYearHgt) {
+  const usable = [];
+  let excluded = 0;
+  for (const p of pairs) {
+    if (p.b.exclude) {
+      excluded++;
+      continue;
+    }
+    const days = pairDays_(p, temps);
+    if (days && p.b.t - p.a.t > 0) usable.push({ y: p.dv, d: p.b.t - p.a.t, days: days });
+  }
+  if (usable.length < MIN_INTERVALS) return null;
+
+  const auto = String(settings.Heizgrenze_aus_Daten || 'ja').toLowerCase() !== 'nein' && usable.length >= 6;
+  const thetas = auto ? THETA_GRID : [settings.Heizgrenze_C];
+  let best = null;
+  for (const theta of thetas) {
+    const fit = wls_(usable.map(u => ({ y: u.y, d: u.d, h: hgtOf_(u.days, theta) })));
+    if (!fit || fit.a <= 0) continue;
+    // Bei gleichem Fehler die Heizgrenze näher an 15 °C bevorzugen (Norm)
+    if (!best || fit.sse < best.fit.sse - 1e-9 || (Math.abs(fit.sse - best.fit.sse) <= 1e-9 && Math.abs(theta - 15) < Math.abs(best.theta - 15))) {
+      best = { theta: theta, fit: fit };
+    }
+  }
+  if (!best) return null;
+  const f = best.fit;
+  const normal = normalYearHgt(best.theta);
+  const meanRate = f.sumY / f.sumD;
+  return {
+    a: f.a,
+    b: f.b,
+    theta: best.theta,
+    thetaSource: auto ? 'Daten' : 'Einstellung',
+    s2: f.s2,
+    cov: f.cov,
+    dof: f.dof,
+    n: f.n,
+    excluded: excluded,
+    coverage: normal > 0 ? f.sumH / normal : 0,
+    cv: meanRate > 0 ? Math.sqrt(f.sse / f.sumD) / meanRate : null,
+    relSeA: Math.sqrt(f.cov.aa) / f.a,
+  };
+}
+
+/** Ampel + Klartext zur Verlässlichkeit. */
+function modelRating_(m) {
+  if (!m) return { level: 'rot', text: 'Noch kein Modell: Es braucht mindestens ' + MIN_INTERVALS + ' Ablesezeiträume mit Temperaturdaten.' };
+  const cover = Math.round(Math.min(m.coverage, 9.99) * 100);
+  let level = 'grün';
+  if (m.n < MIN_INTERVALS || m.coverage < 0.15) level = 'rot';
+  else if (m.coverage < 0.5 || m.relSeA > 0.1) level = 'gelb';
+  const basis = m.n + ' Ablesezeiträume, ' + (cover >= 100 ? 'mehr als eine ganze Heizsaison' : cover + ' % einer normalen Heizsaison');
+  const quality = 'Streuung um das Modell ' + Math.round((m.cv || 0) * 100) + ' %, Unsicherheit des Verbrauchs je Heizgradtag ±' + Math.round(m.relSeA * 100) + ' %';
+  const lead = { grün: 'Belastbar', gelb: 'Eingeschränkt belastbar', rot: 'Noch wenig belastbar' }[level];
+  return { level: level, text: lead + ': ' + basis + '. ' + quality + '.' };
+}
+
+/** Erwarteter Verbrauch (m³) und Standardabweichung für einen Zeitraum mit bekannten Tagesanteilen. */
+function predictPair_(m, days, d) {
+  const h = hgtOf_(days, m.theta);
+  const mean = m.a * h + m.b * d;
+  const varParam = m.cov.aa * h * h + 2 * m.cov.ab * h * d + m.cov.bb * d * d;
+  return { mean: mean, sd: Math.sqrt(m.s2 * d + varParam) };
+}
+
 // ===== Calc.gs =====
 
 /**
@@ -519,10 +671,13 @@ function degreeDays_(tm, heizgrenze, raum) {
 }
 
 /**
- * Verteilt den Verbrauch jedes Ablesepaars nach HGT auf die Tage (ohne Wärmebedarf oder ohne Temperatur
- * gleichmäßig). Rückgabe { m3: {iso: m³}, covered: {iso: Anteil 0–1}, hints }.
+ * Verteilt den Verbrauch jedes Ablesepaars auf die Tage: Gewicht Anteil × (b + a · HGT) aus dem Modell
+ * (ohne Modell a = 1, b = 0, also nach HGT); ohne Wärmebedarf oder ohne Temperatur gleichmäßig.
+ * Rückgabe { m3: {iso: m³}, covered: {iso: Anteil 0–1}, hints }.
  */
-function distributeReadings_(pairs, temps, heizgrenze) {
+function distributeReadings_(pairs, temps, heizgrenze, weights) {
+  const wa = weights ? weights.a : 1;
+  const wb = weights ? weights.b : 0;
   const m3 = {};
   const covered = {};
   const missing = [];
@@ -536,7 +691,7 @@ function distributeReadings_(pairs, temps, heizgrenze) {
       const iso = isoFromDayNumber_(d);
       const tm = temps[iso] ? temps[iso].tm : null;
       if (tm === null) gap = true;
-      const w = tm === null ? 0 : f * Math.max(0, heizgrenze - tm);
+      const w = tm === null ? 0 : f * (wb + wa * Math.max(0, heizgrenze - tm));
       parts.push({ iso: iso, f: f, w: w });
       sumW += w;
     }
@@ -610,28 +765,32 @@ function dailyNormals_(weather, fromYear, toYear, heizgrenze) {
 /**
  * Gesamtrechnung. in: { readings (bereinigt, sortiert), pairs (readingPairs_), weather {iso: tm}, conversions, placeholder,
  * tariffs [{from, ap, gp}], payments [{from, amount, day}], periods [{name, start, end}], settings, today }
- * Rückgabe { days, months, periods, hints, weatherLast }.
+ * Rückgabe { days, months, periods, model, rating, temps, hints, weatherLast }.
  */
 function computeAll_(input) {
   const s = input.settings;
-  const heizgrenze = s.Heizgrenze_C;
   const raum = s.Raumtemperatur_C;
   const hints = [];
   const readings = input.readings;
   const weatherDates = Object.keys(input.weather).sort();
   const weatherLast = weatherDates.length ? weatherDates[weatherDates.length - 1] : null;
-  if (!readings.length) return { days: [], months: [], periods: [], hints: hints, weatherLast: weatherLast };
+  if (!readings.length) return { days: [], months: [], periods: [], model: null, rating: modelRating_(null), temps: {}, hints: hints, weatherLast: weatherLast };
 
   const first = readings.reduce((m, r) => (r.date < m ? r.date : m), readings[0].date);
   const periodStart = input.periods.reduce((m, p) => (p.start < m ? p.start : m), first);
   const from = periodStart < first ? periodStart : first;
   const to = input.today;
   const temps = fillTemps_(input.weather, from, to);
-  const dist = distributeReadings_(input.pairs, temps, heizgrenze);
-  hints.push.apply(hints, dist.hints);
-
   const lastFullYear = Number(to.slice(0, 4)) - 1;
   const fromYear = Number((s.Wetter_ab || '2020-01-01').slice(0, 4));
+  const yearNormal = theta => {
+    const n = dailyNormals_(input.weather, fromYear, lastFullYear, theta);
+    return Object.keys(n).filter(k => k !== '02-29').reduce((sum, k) => sum + n[k], 0);
+  };
+  const model = fitModel_(input.pairs, temps, s, yearNormal);
+  const heizgrenze = model ? model.theta : s.Heizgrenze_C;
+  const dist = distributeReadings_(input.pairs, temps, heizgrenze, model);
+  hints.push.apply(hints, dist.hints);
   const normals = dailyNormals_(input.weather, fromYear, lastFullYear, heizgrenze);
 
   const days = isoRange_(from, to).map(iso => {
@@ -652,6 +811,8 @@ function computeAll_(input) {
       hgtNormal: normals[iso.slice(5)] === undefined ? null : normals[iso.slice(5)],
       m3: m3,
       kWh: kWh,
+      factor: conv.factor,
+      factorSource: conv.source,
       covered: Math.min(1, dist.covered[iso] || 0),
       ap: tariff ? tariff.ap : null,
       costWork: costWork,
@@ -664,8 +825,25 @@ function computeAll_(input) {
   const estTemp = days.filter(d => d.tmSrc === 'interpoliert').length;
   if (estTemp) hints.push({ level: 'info', text: estTemp + ' Tag(e) mit interpolierter Temperatur (Lücke in den DWD-Daten).' });
 
-  const periods = input.periods.map(p => summarizePeriod_(p, days, input.payments, to, hints));
-  return { days: days, months: aggregateMonths_(days), periods: periods, hints: hints, weatherLast: weatherLast };
+  const years = [];
+  for (let y = fromYear; y <= lastFullYear; y++) years.push(y);
+  const fctx = {
+    days: days, model: model, theta: heizgrenze, weather: input.weather, years: years, normals: normals,
+    conversions: input.conversions, placeholder: input.placeholder, tariffs: input.tariffs, payments: input.payments,
+    settings: s, today: to,
+  };
+  const periods = input.periods.map(p => {
+    const sum = summarizePeriod_(p, days, input.payments, to, hints);
+    if (sum.status !== 'zukünftig') {
+      // ±3 % solange Platzhalter/Schätzung, sonst ±0,5 % (der Brennwert schwankt von Monat zu Monat)
+      const last = input.conversions[input.conversions.length - 1];
+      const estimated = days.some(d => d.date >= p.start && d.date <= p.end && d.factorSource !== 'Rechnung') || (p.end > to && !(last && last.status === 'Rechnung'));
+      sum.forecast = forecastPeriod_(p, Object.assign({ u: estimated ? (s.Unsicherheit_Umrechnung_Prozent || 3) / 100 : 0.005 }, fctx));
+    }
+    return sum;
+  });
+  if (!model && input.pairs.length) hints.push({ level: 'info', text: modelRating_(null).text });
+  return { days: days, months: aggregateMonths_(days), periods: periods, model: model, rating: modelRating_(model), temps: temps, hints: hints, weatherLast: weatherLast };
 }
 
 function aggregateMonths_(days) {
@@ -757,6 +935,213 @@ function summarizePeriod_(p, days, paymentRows, today, hints) {
     paymentsPaid: round_(paid, 2),
     paymentsCountTotal: all.length,
     balance: round_(cost - paid, 2), // > 0 Nachzahlung, < 0 Guthaben (Stand heute)
+  };
+}
+
+// ===== Forecast.gs =====
+
+/**
+ * Forecast.gs – Prognose bis Periodenende per Monte Carlo (rein, in Node testbar).
+ *
+ * Unsicherheiten: Modellparameter (a, b, σ²), Zufallsabweichung der Tage, Wetter bis Periodenende (ein ganzes
+ * historisches Jahr je Lauf), Umrechnung m³ → kWh (±3 % solange geschätzt, gilt für ALLE kWh der Periode).
+ * Weil der Verbrauch linear in a und b ist, werden die Tageswerte je Wetterjahr vorab zu Summen verdichtet –
+ * jeder Lauf kostet dann nur ein paar Rechenschritte.
+ */
+
+const MC_RUNS = 4000;
+
+/** Reproduzierbarer Zufall (mulberry32). */
+function rng_(seed) {
+  let s = seed >>> 0;
+  return function () {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hash_(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+function normal_(rnd) {
+  let u = 0;
+  while (u === 0) u = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd());
+}
+
+/** Gamma-verteilte Zufallszahl (Marsaglia & Tsang). */
+function gamma_(rnd, shape) {
+  if (shape < 1) return gamma_(rnd, shape + 1) * Math.pow(rnd(), 1 / shape);
+  const d = shape - 1 / 3;
+  const c = 1 / Math.sqrt(9 * d);
+  for (;;) {
+    let x;
+    let v;
+    do {
+      x = normal_(rnd);
+      v = 1 + c * x;
+    } while (v <= 0);
+    v = v * v * v;
+    const u = rnd();
+    if (u < 1 - 0.0331 * x * x * x * x || Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+  }
+}
+
+function quantile_(sorted, q) {
+  const i = q * (sorted.length - 1);
+  const lo = Math.floor(i);
+  const hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
+function band_(values) {
+  const s = values.slice().sort((x, y) => x - y);
+  return { p10: round_(quantile_(s, 0.1), 2), p50: round_(quantile_(s, 0.5), 2), p80: round_(quantile_(s, 0.8), 2), p90: round_(quantile_(s, 0.9), 2) };
+}
+
+/** Temperatur eines Kalendertags (MM-TT) in Jahr y; 29.02. fällt auf den 28.02. zurück. */
+function tmInYear_(weather, y, mmdd) {
+  const v = weather[y + '-' + mmdd];
+  if (v !== undefined) return v;
+  return mmdd === '02-29' ? weather[y + '-02-28'] : undefined;
+}
+
+/**
+ * Prognose für eine Periode. ctx: { days (Tagesrechnung bis heute), model, theta, weather, years [Jahre],
+ * normals {MM-TT: HGT}, conversions, placeholder, tariffs, payments, settings, today, u (rel. Umrechnungsunsicherheit) }
+ * Rückgabe null, wenn ohne Modell unbekannte Tage bleiben oder ein Tarif fehlt.
+ */
+function forecastPeriod_(p, ctx) {
+  const m = ctx.model;
+  const pastEnd = p.end < ctx.today ? p.end : ctx.today;
+  const acc = { kWhM: 0, costM: 0, m3M: 0, base: 0, M1: 0, MH: 0, K1: 0, KH: 0, C1: 0, CH: 0 };
+  let tariffOk = true;
+
+  // Vergangenheit: gemessene Anteile + nicht abgelesene Anteile mit echtem Wetter
+  for (const d of ctx.days) {
+    if (d.date < p.start || d.date > pastEnd) continue;
+    if (d.ap === null || d.costBase === null) tariffOk = false;
+    const f = d.factor;
+    const ap = (d.ap || 0) / 100;
+    acc.base += d.costBase || 0;
+    acc.m3M += d.m3 || 0;
+    acc.kWhM += (d.m3 || 0) * f;
+    acc.costM += (d.m3 || 0) * f * ap;
+    const u = 1 - d.covered;
+    if (u > 1e-9) {
+      const h = d.hgt !== null ? d.hgt : ctx.normals[d.date.slice(5)] || 0;
+      acc.M1 += u;
+      acc.MH += u * h;
+      acc.K1 += u * f;
+      acc.KH += u * f * h;
+      acc.C1 += u * f * ap;
+      acc.CH += u * f * ap * h;
+    }
+  }
+
+  // Zukunft: Wetter je Klimajahr
+  const future = p.end > ctx.today ? isoRange_(isoFromDayNumber_(Math.max(dayNumber_(ctx.today) + 1, dayNumber_(p.start))), p.end) : [];
+  const years = ctx.years.filter(y => future.every(iso => tmInYear_(ctx.weather, y, iso.slice(5)) !== undefined));
+  const perYear = (years.length ? years : [null]).map(() => ({ MH: 0, KH: 0, CH: 0 }));
+  for (const iso of future) {
+    const tariff = validAt_(ctx.tariffs, iso);
+    if (!tariff) tariffOk = false;
+    const f = factorAt_(ctx.conversions, iso, ctx.placeholder).factor;
+    const ap = tariff ? tariff.ap / 100 : 0;
+    acc.base += tariff ? basePerDay_(tariff.gp, iso, ctx.settings.Grundpreis_Verteilung) : 0;
+    acc.M1 += 1;
+    acc.K1 += f;
+    acc.C1 += f * ap;
+    perYear.forEach((py, i) => {
+      const tm = years.length ? tmInYear_(ctx.weather, years[i], iso.slice(5)) : null;
+      const h = tm === null ? ctx.normals[iso.slice(5)] || 0 : Math.max(0, ctx.theta - tm);
+      py.MH += h;
+      py.KH += f * h;
+      py.CH += f * ap * h;
+    });
+  }
+  if (!tariffOk) return null;
+  if (!m && acc.M1 > 0) return null;
+
+  const all = paymentSchedule_(ctx.payments, p.start, p.end);
+  const due = all.filter(x => x.date <= ctx.today);
+  const paymentsTotal = all.reduce((s, x) => s + x.amount, 0);
+  const paid = due.reduce((s, x) => s + x.amount, 0);
+  const mean = (k) => perYear.reduce((s, py) => s + py[k], 0) / perYear.length;
+  const avgYear = { MH: mean('MH'), KH: mean('KH'), CH: mean('CH') };
+  const rnd = rng_(hash_(p.name + '|' + ctx.today));
+  const a0 = m ? m.a : 0;
+  const b0 = m ? m.b : 0;
+
+  /** Ein Lauf; opts schaltet einzelne Unsicherheiten ab (für „größte Unsicherheit“). */
+  function run(opts) {
+    let a = a0;
+    let b = b0;
+    let s2 = m ? m.s2 : 0;
+    if (m && opts.model) {
+      s2 = (m.s2 * m.dof) / (2 * gamma_(rnd, m.dof / 2)); // σ² aus skalierter inverser χ²-Verteilung
+      const k = s2 / m.s2;
+      const z1 = normal_(rnd);
+      const z2 = normal_(rnd);
+      const l11 = Math.sqrt(Math.max(0, m.cov.aa * k));
+      const l21 = l11 > 0 ? (m.cov.ab * k) / l11 : 0;
+      const l22 = Math.sqrt(Math.max(0, m.cov.bb * k - l21 * l21));
+      a = Math.max(0, a0 + l11 * z1);
+      b = Math.max(0, b0 + l21 * z1 + l22 * z2);
+    }
+    const yr = opts.weather ? perYear[Math.floor(rnd() * perYear.length)] : avgYear;
+    const MH = acc.MH + yr.MH;
+    const mean3 = b * acc.M1 + a * MH;
+    const noise = opts.model ? Math.sqrt(s2 * acc.M1) * normal_(rnd) : 0;
+    const m3U = Math.max(0, mean3 + noise);
+    const scale = mean3 > 1e-9 ? m3U / mean3 : 0;
+    const kWhU = scale * (b * acc.K1 + a * (acc.KH + yr.KH));
+    const costU = scale * (b * acc.C1 + a * (acc.CH + yr.CH));
+    const conv = opts.conversion ? 1 + ctx.u * normal_(rnd) : 1;
+    const kWh = conv * (acc.kWhM + kWhU);
+    const cost = conv * (acc.costM + costU) + acc.base;
+    return { m3: acc.m3M + m3U, kWh: kWh, cost: cost, balance: cost - paymentsTotal };
+  }
+
+  const full = [];
+  for (let i = 0; i < MC_RUNS; i++) full.push(run({ model: true, weather: true, conversion: true }));
+  const spread = opts => {
+    const v = [];
+    for (let i = 0; i < MC_RUNS / 4; i++) v.push(run(opts).balance);
+    const b = band_(v);
+    return b.p90 - b.p10;
+  };
+  const sources = [
+    { name: 'Wetter', width: future.length ? spread({ weather: true }) : 0 },
+    { name: 'Modell', width: acc.M1 > 0 ? spread({ model: true }) : 0 },
+    { name: 'Umrechnung', width: spread({ conversion: true }) },
+  ].sort((x, y) => y.width - x.width);
+
+  const kWh = band_(full.map(r => r.kWh));
+  const cost = band_(full.map(r => r.cost));
+  const remaining = all.length - due.length;
+  const perRate = q => Math.max(0, Math.ceil((q - paid) / remaining));
+  return {
+    m3: band_(full.map(r => r.m3)),
+    kWh: kWh,
+    cost: cost,
+    balance: band_(full.map(r => r.balance)),
+    paymentsTotal: round_(paymentsTotal, 2),
+    paymentsCount: all.length,
+    measuredShare: kWh.p50 > 0 ? round_(Math.min(1, acc.kWhM / kWh.p50), 3) : 1,
+    unknownDays: round_(acc.M1, 1),
+    climateYears: years.length,
+    mainUncertainty: sources[0].width >= 1 ? sources[0].name : null,
+    recommendation:
+      p.start <= ctx.today && remaining > 0
+        ? { remaining: remaining, current: all[all.length - 1].amount, balanced: perRate(cost.p50), safe: perRate(cost.p80) }
+        : null,
   };
 }
 
@@ -1099,41 +1484,47 @@ function updateWeather_(ss, settings) {
 // ===== Overview.gs =====
 
 /**
- * Overview.gs – liest alle Tabs, rechnet und baut die Übersicht für die App.
+ * Overview.gs – liest alle Tabs (einmal pro Anfrage), rechnet und baut die Übersicht für die App.
  */
 
-/**
- * Rechnet alles aus dem Sheet. `pre` (optional): schon gelesene { settings, readings } – spart beim Speichern
- * einer Ablesung zwei Lesezugriffe. Rückgabe { s, today, readings, intervals, result, hints, weatherLast }.
- */
-function computeFromSheet_(ss, pre) {
+/** Alle Eingaben aus dem Sheet. */
+function readInputs_(ss) {
+  return {
+    settings: readSettings_(ss),
+    readings: readReadings_(ss),
+    conversions: readSorted_(ss, 'Umrechnung'),
+    tariffs: readSorted_(ss, 'Tarife'),
+    payments: readSorted_(ss, 'Abschläge'),
+    periods: readPeriods_(ss),
+    weather: readWeather_(ss),
+  };
+}
+
+/** Rechnet aus den Eingaben. Rückgabe { s, today, readings, intervals, result, hints, weatherLast, conversions, placeholder }. */
+function computeFromInputs_(inp) {
   const today = Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd');
-  const settings = pre ? pre.settings : readSettings_(ss);
-  const raw = pre ? pre.readings : readReadings_(ss);
-  const s = settings.values;
-  const conv = readSorted_(ss, 'Umrechnung');
-  const tar = readSorted_(ss, 'Tarife');
-  const pay = readSorted_(ss, 'Abschläge');
-  const per = readPeriods_(ss);
-  const weather = readWeather_(ss);
-  const cleaned = cleanReadings_(raw.readings);
+  const s = inp.settings.values;
+  const cleaned = cleanReadings_(inp.readings.readings);
   const pairs = readingPairs_(cleaned.readings);
   const placeholder = { z: s.Platzhalter_Zustandszahl, hs: s.Platzhalter_Brennwert_kWh_m3 };
-  const intervals = buildIntervals_(pairs.pairs, conv.rows, placeholder);
+  const intervals = buildIntervals_(pairs.pairs, inp.conversions.rows, placeholder);
   const result = computeAll_({
     readings: cleaned.readings,
     pairs: pairs.pairs,
-    weather: weather.map,
-    conversions: conv.rows,
+    weather: inp.weather.map,
+    conversions: inp.conversions.rows,
     placeholder: placeholder,
-    tariffs: tar.rows,
-    payments: pay.rows,
-    periods: per.periods,
+    tariffs: inp.tariffs.rows,
+    payments: inp.payments.rows,
+    periods: inp.periods.periods,
     settings: s,
     today: today,
   });
 
-  const hints = [].concat(settings.hints, raw.hints, conv.hints, tar.hints, pay.hints, per.hints, cleaned.hints, pairs.hints, result.hints);
+  const hints = [].concat(
+    inp.settings.hints, inp.readings.hints, inp.conversions.hints, inp.tariffs.hints, inp.payments.hints, inp.periods.hints,
+    cleaned.hints, pairs.hints, result.hints
+  );
   if (!cleaned.readings.length) hints.push({ level: 'info', text: 'Noch keine Ablesung gespeichert.' });
   if (intervals.some(i => i.conversion === 'Platzhalter')) {
     hints.push({
@@ -1142,22 +1533,33 @@ function computeFromSheet_(ss, pre) {
         ') – echte Werte aus der Rechnung im Tab „Umrechnung“ eintragen.',
     });
   }
-  if (!weather.last) {
+  const last = inp.weather.last;
+  if (!last) {
     hints.push({ level: 'warn', text: 'Noch keine Wetterdaten – im Sheet „Gaszähler → Wetter aktualisieren & neu berechnen“ wählen.' });
-  } else if (dayNumber_(today) - dayNumber_(weather.last) > 3) {
-    hints.push({ level: 'warn', text: 'Wetterdaten veraltet (letzter Tag ' + deDate_(weather.last) + ') – Protokoll prüfen.' });
+  } else if (dayNumber_(today) - dayNumber_(last) > 3) {
+    hints.push({ level: 'warn', text: 'Wetterdaten veraltet (letzter Tag ' + deDate_(last) + ') – Protokoll prüfen.' });
   }
-  if (cleaned.readings.length && !per.periods.some(p => p.start <= today && p.end >= today)) {
+  if (cleaned.readings.length && !inp.periods.periods.some(p => p.start <= today && p.end >= today)) {
     hints.push({ level: 'info', text: 'Keine Abrechnungsperiode für heute – im Tab „Perioden“ eine neue anlegen.' });
   }
-  return { s: s, today: today, readings: cleaned.readings, intervals: intervals, result: result, hints: hints, weatherLast: weather.last };
+  return {
+    s: s, today: today, readings: cleaned.readings, intervals: intervals, result: result, hints: hints, weatherLast: last,
+    conversions: inp.conversions.rows, placeholder: placeholder,
+  };
 }
 
-function buildOverview_(ss, pre) {
-  const c = computeFromSheet_(ss, pre);
+function computeFromSheet_(ss) {
+  return computeFromInputs_(readInputs_(ss));
+}
+
+/** Übersicht für die App; `c` = Ergebnis von computeFromInputs_ (sonst wird gelesen und gerechnet). */
+function buildOverview_(ss, c) {
+  c = c || computeFromSheet_(ss);
   const s = c.s;
+  const m = c.result.model;
   let last = null;
   for (const r of c.readings) if (!last || r.t > last.t) last = r;
+  const factorToday = factorAt_(c.conversions, c.today, c.placeholder).factor;
   return {
     generatedAt: now_().toISOString(),
     today: c.today,
@@ -1169,6 +1571,21 @@ function buildOverview_(ss, pre) {
     intervals: c.intervals,
     months: c.result.months.slice(-14),
     periods: c.result.periods,
+    model: m
+      ? {
+          a: round_(m.a, 4),
+          aKWh: round_(m.a * factorToday, 3),
+          b: round_(m.b, 3),
+          theta: m.theta,
+          thetaSource: m.thetaSource,
+          n: m.n,
+          excluded: m.excluded,
+          coverage: round_(m.coverage, 3),
+          cv: m.cv === null ? null : round_(m.cv, 3),
+          relSeA: round_(m.relSeA, 3),
+        }
+      : null,
+    rating: c.result.rating,
     weather: { last: c.weatherLast, station: dwdStation_(s.DWD_Station) },
     hints: c.hints,
   };
@@ -1250,31 +1667,43 @@ function fail_(code, message, details) {
   return { ok: false, v: API_VERSION, error: error };
 }
 
-/** Speichert eine Ablesung unter Sperre (keine zwei Schreibvorgänge gleichzeitig). */
+/**
+ * Speichert eine Ablesung unter Sperre (keine zwei Schreibvorgänge gleichzeitig). Jeder Tab wird nur einmal
+ * gelesen: dieselben Eingaben dienen der Prüfung (inkl. Modell) und danach der neuen Übersicht.
+ */
 function addReadingAction_(ss, input) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw apiError_('BUSY', 'Server ist gerade beschäftigt – bitte gleich nochmal.');
   try {
-    const settings = readSettings_(ss);
-    const readings = readReadings_(ss);
-    const s = settings.values;
+    const inp = readInputs_(ss);
+    const s = inp.settings.values;
     const r = normalizeReadingInput_(input, s.Zähler_aktuell);
-    const res = checkNewReading_(r, readings.readings, {
-      today: Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd'),
+    const before = computeFromInputs_(inp);
+    const res = checkNewReading_(r, inp.readings.readings, {
+      today: before.today,
       minDate: s.Mindestdatum,
       maxPerDay: s.Plausi_max_m3_pro_Tag,
+      expect: modelExpectation_(before.result),
     });
-    let pre = { settings: settings, readings: readings };
-    if (res.status === 'new') {
-      const row = appendReading_(ss, r, readings.readings);
-      SpreadsheetApp.flush(); // laut Doku vor dem Freigeben der Sperre
-      // Schon Gelesenes weiterverwenden; nach Sortierung (Nachtrag) stimmen die Zeilennummern nicht mehr → neu lesen
-      pre = row ? { settings: settings, readings: { readings: readings.readings.concat([Object.assign({ row: row, exclude: false }, r)]), hints: readings.hints } } : null;
-    }
-    return { saved: res.status, overview: buildOverview_(ss, pre) };
+    if (res.status !== 'new') return { saved: res.status, overview: buildOverview_(ss, before) };
+    const row = appendReading_(ss, r, inp.readings.readings);
+    SpreadsheetApp.flush(); // laut Doku vor dem Freigeben der Sperre
+    if (row) inp.readings.readings.push(Object.assign({ row: row, exclude: false }, r));
+    else inp.readings = readReadings_(ss); // nachgetragen und sortiert → Zeilennummern neu lesen
+    return { saved: 'new', overview: buildOverview_(ss, computeFromInputs_(inp)) };
   } finally {
     lock.releaseLock();
   }
+}
+
+/** Erwartung aus dem Modell für einen neuen Zeitraum (nur bei brauchbarem Modell). */
+function modelExpectation_(result) {
+  const m = result.model;
+  if (!m || result.rating.level === 'rot') return null;
+  return (before, r) => {
+    const days = pairDays_({ a: before, b: r }, result.temps);
+    return days ? predictPair_(m, days, r.t - before.t) : null;
+  };
 }
 
 // ===== Job.gs =====

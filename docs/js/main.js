@@ -6,7 +6,7 @@ import { createApi, NetworkError } from './api.js';
 import { createQueue } from './queue.js';
 import { checkReading, latestKnown } from './plausi.js';
 import { parseReading, localIsoDate, localTime, readingT, formatDate } from './format.js';
-import { renderLast, renderIntervals, renderHints, renderQueue, renderPeriods, renderMonths } from './render.js';
+import { renderLast, renderIntervals, renderHints, renderQueue, renderPeriods, renderMonths, renderModel } from './render.js';
 
 const $ = id => document.getElementById(id);
 const dom = Object.fromEntries(
@@ -15,7 +15,7 @@ const dom = Object.fromEntries(
     'saveBtn', 'msg', 'queueCard', 'queueTitle', 'flushBtn', 'queueList', 'lastText', 'lastSub', 'dataAge', 'intervalRows',
     'intervalEmpty', 'hintsCard', 'hintsList', 'keyState', 'serverState', 'testBtn', 'changeKeyBtn', 'testMsg', 'appVersion',
     'confirmDialog', 'confirmText', 'confirmOk', 'confirmCancel', 'periodList', 'periodEmpty', 'monthRows', 'monthEmpty',
-    'weatherState',
+    'weatherState', 'ratingText', 'modelFacts',
   ].map(id => [id, $(id)])
 );
 
@@ -29,7 +29,7 @@ let lastSync = 0;
 let syncing = null;
 
 const today = () => localIsoDate();
-const MIN_SCHEMA = 2; // Server-Schema, das diese App-Version erwartet
+const MIN_SCHEMA = 3; // Server-Schema, das diese App-Version erwartet
 const AUTH_TEXT = 'Der Schlüssel ist falsch oder wurde geändert.';
 
 function hostOf(url) {
@@ -93,6 +93,7 @@ function renderAll() {
   const hints = overview ? overview.hints.slice() : [];
   if (serverOld) hints.unshift({ level: 'warn', text: oldText });
   renderHints(dom.hintsCard, dom.hintsList, hints);
+  renderModel(dom.ratingText, dom.modelFacts, overview && overview.model, overview && overview.rating);
   renderPeriods(dom.periodList, dom.periodEmpty, (overview && overview.periods) || []);
   renderMonths(dom.monthRows, dom.monthEmpty, (overview && overview.months) || []);
   if (serverOld) dom.periodEmpty.textContent = dom.monthEmpty.textContent = oldText;

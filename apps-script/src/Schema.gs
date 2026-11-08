@@ -137,7 +137,9 @@ function settingDefs_() {
     { key: 'Platzhalter_Brennwert_kWh_m3', type: 'number', value: 11.3, text: 'Gilt, solange der Tab „Umrechnung“ leer ist' },
     { key: 'DWD_Station', type: 'text', value: '05906', text: 'DWD-Stationsnummer (05906 = Mannheim)' },
     { key: 'Wetter_ab', type: 'date', value: '2020-01-01', text: 'Wetterdaten und Normalwerte ab diesem Datum' },
-    { key: 'Heizgrenze_C', type: 'number', value: 15, text: 'Tagesmittel, ab dem nicht mehr geheizt wird (für Heizgradtage)' },
+    { key: 'Heizgrenze_C', type: 'number', value: 15, text: 'Tagesmittel, ab dem nicht mehr geheizt wird – gilt, wenn Heizgrenze_aus_Daten = nein oder zu wenig Daten' },
+    { key: 'Heizgrenze_aus_Daten', type: 'text', value: 'ja', text: '„ja“: Heizgrenze 10–18 °C aus deinen Ablesungen schätzen (ab 6 Zeiträumen) · „nein“: Heizgrenze_C verwenden' },
+    { key: 'Unsicherheit_Umrechnung_Prozent', type: 'number', value: 3, text: 'Unsicherheit von Brennwert × Zustandszahl in der Prognose, solange nicht aus der Rechnung' },
     { key: 'Raumtemperatur_C', type: 'number', value: 20, text: 'Für die Gradtagzahl G20/15 (VDI 3807)' },
     { key: 'Grundpreis_Verteilung', type: 'text', value: 'Jahr', text: '„Jahr“: Monatspreis × 12 / 365 je Tag · „Kalendermonat“: Monatspreis / Tage des Monats' },
   ];

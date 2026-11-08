@@ -61,10 +61,13 @@ function degreeDays_(tm, heizgrenze, raum) {
 }
 
 /**
- * Verteilt den Verbrauch jedes Ablesepaars nach HGT auf die Tage (ohne Wärmebedarf oder ohne Temperatur
- * gleichmäßig). Rückgabe { m3: {iso: m³}, covered: {iso: Anteil 0–1}, hints }.
+ * Verteilt den Verbrauch jedes Ablesepaars auf die Tage: Gewicht Anteil × (b + a · HGT) aus dem Modell
+ * (ohne Modell a = 1, b = 0, also nach HGT); ohne Wärmebedarf oder ohne Temperatur gleichmäßig.
+ * Rückgabe { m3: {iso: m³}, covered: {iso: Anteil 0–1}, hints }.
  */
-function distributeReadings_(pairs, temps, heizgrenze) {
+function distributeReadings_(pairs, temps, heizgrenze, weights) {
+  const wa = weights ? weights.a : 1;
+  const wb = weights ? weights.b : 0;
   const m3 = {};
   const covered = {};
   const missing = [];
@@ -78,7 +81,7 @@ function distributeReadings_(pairs, temps, heizgrenze) {
       const iso = isoFromDayNumber_(d);
       const tm = temps[iso] ? temps[iso].tm : null;
       if (tm === null) gap = true;
-      const w = tm === null ? 0 : f * Math.max(0, heizgrenze - tm);
+      const w = tm === null ? 0 : f * (wb + wa * Math.max(0, heizgrenze - tm));
       parts.push({ iso: iso, f: f, w: w });
       sumW += w;
     }
@@ -152,28 +155,32 @@ function dailyNormals_(weather, fromYear, toYear, heizgrenze) {
 /**
  * Gesamtrechnung. in: { readings (bereinigt, sortiert), pairs (readingPairs_), weather {iso: tm}, conversions, placeholder,
  * tariffs [{from, ap, gp}], payments [{from, amount, day}], periods [{name, start, end}], settings, today }
- * Rückgabe { days, months, periods, hints, weatherLast }.
+ * Rückgabe { days, months, periods, model, rating, temps, hints, weatherLast }.
  */
 function computeAll_(input) {
   const s = input.settings;
-  const heizgrenze = s.Heizgrenze_C;
   const raum = s.Raumtemperatur_C;
   const hints = [];
   const readings = input.readings;
   const weatherDates = Object.keys(input.weather).sort();
   const weatherLast = weatherDates.length ? weatherDates[weatherDates.length - 1] : null;
-  if (!readings.length) return { days: [], months: [], periods: [], hints: hints, weatherLast: weatherLast };
+  if (!readings.length) return { days: [], months: [], periods: [], model: null, rating: modelRating_(null), temps: {}, hints: hints, weatherLast: weatherLast };
 
   const first = readings.reduce((m, r) => (r.date < m ? r.date : m), readings[0].date);
   const periodStart = input.periods.reduce((m, p) => (p.start < m ? p.start : m), first);
   const from = periodStart < first ? periodStart : first;
   const to = input.today;
   const temps = fillTemps_(input.weather, from, to);
-  const dist = distributeReadings_(input.pairs, temps, heizgrenze);
-  hints.push.apply(hints, dist.hints);
-
   const lastFullYear = Number(to.slice(0, 4)) - 1;
   const fromYear = Number((s.Wetter_ab || '2020-01-01').slice(0, 4));
+  const yearNormal = theta => {
+    const n = dailyNormals_(input.weather, fromYear, lastFullYear, theta);
+    return Object.keys(n).filter(k => k !== '02-29').reduce((sum, k) => sum + n[k], 0);
+  };
+  const model = fitModel_(input.pairs, temps, s, yearNormal);
+  const heizgrenze = model ? model.theta : s.Heizgrenze_C;
+  const dist = distributeReadings_(input.pairs, temps, heizgrenze, model);
+  hints.push.apply(hints, dist.hints);
   const normals = dailyNormals_(input.weather, fromYear, lastFullYear, heizgrenze);
 
   const days = isoRange_(from, to).map(iso => {
@@ -194,6 +201,8 @@ function computeAll_(input) {
       hgtNormal: normals[iso.slice(5)] === undefined ? null : normals[iso.slice(5)],
       m3: m3,
       kWh: kWh,
+      factor: conv.factor,
+      factorSource: conv.source,
       covered: Math.min(1, dist.covered[iso] || 0),
       ap: tariff ? tariff.ap : null,
       costWork: costWork,
@@ -206,8 +215,25 @@ function computeAll_(input) {
   const estTemp = days.filter(d => d.tmSrc === 'interpoliert').length;
   if (estTemp) hints.push({ level: 'info', text: estTemp + ' Tag(e) mit interpolierter Temperatur (Lücke in den DWD-Daten).' });
 
-  const periods = input.periods.map(p => summarizePeriod_(p, days, input.payments, to, hints));
-  return { days: days, months: aggregateMonths_(days), periods: periods, hints: hints, weatherLast: weatherLast };
+  const years = [];
+  for (let y = fromYear; y <= lastFullYear; y++) years.push(y);
+  const fctx = {
+    days: days, model: model, theta: heizgrenze, weather: input.weather, years: years, normals: normals,
+    conversions: input.conversions, placeholder: input.placeholder, tariffs: input.tariffs, payments: input.payments,
+    settings: s, today: to,
+  };
+  const periods = input.periods.map(p => {
+    const sum = summarizePeriod_(p, days, input.payments, to, hints);
+    if (sum.status !== 'zukünftig') {
+      // ±3 % solange Platzhalter/Schätzung, sonst ±0,5 % (der Brennwert schwankt von Monat zu Monat)
+      const last = input.conversions[input.conversions.length - 1];
+      const estimated = days.some(d => d.date >= p.start && d.date <= p.end && d.factorSource !== 'Rechnung') || (p.end > to && !(last && last.status === 'Rechnung'));
+      sum.forecast = forecastPeriod_(p, Object.assign({ u: estimated ? (s.Unsicherheit_Umrechnung_Prozent || 3) / 100 : 0.005 }, fctx));
+    }
+    return sum;
+  });
+  if (!model && input.pairs.length) hints.push({ level: 'info', text: modelRating_(null).text });
+  return { days: days, months: aggregateMonths_(days), periods: periods, model: model, rating: modelRating_(model), temps: temps, hints: hints, weatherLast: weatherLast };
 }
 
 function aggregateMonths_(days) {

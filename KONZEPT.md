@@ -1,6 +1,6 @@
 # Gaszähler V1 – Konzept
 
-Stand: 08.11.2026 · Status: **freigegeben**, M1 und M2 umgesetzt.
+Stand: 08.11.2026 · Status: **freigegeben**, M1–M3 umgesetzt.
 Lebendes Dokument – Quelle der Wahrheit für Entscheidungen und für spätere Sessions.
 
 ---
@@ -44,6 +44,9 @@ Jahresabrechnung, 7-Tage-Vorhersage in der Prognose, ESP32-Sensor, Erinnerungen.
 | 08.11. | Grundpreis je Tag = Monatspreis × 12 / 365 (Einstellung „Grundpreis_Verteilung“) | Abrechnungsweise des Versorgers unbekannt; umschaltbar auf „Kalendermonat“ |
 | 08.11. | Laufende Periode zeigt nur den Zwischenstand (neutral), kein „Guthaben“ | Abschläge werden im Voraus gezahlt – ein Guthaben nach 8 Tagen wäre irreführend |
 | 08.11. | **Aufräumen nach Review:** ein schemagesteuerter Tab-Leser (`readRows_`), eine Paar-Funktion für Ablesezeiträume, keine Ablese-ID (Duplikat = gleicher Tag + Wert), kein Wetter-Cache und keine Fehlversuchs-Zählung (ohne messbaren Nutzen), `setup` aus dem Editor ohne Dialog | weniger Doppelungen, eine Stelle pro Regel; Backend −11 % Code |
+| 08.11. | **M3:** Ampel nach Datenmenge (HGT-Abdeckung) und Unsicherheit von a; CV(RMSE) nur als Information | Ablesezeiträume sind unregelmäßig (2–75 Tage); ASHRAEs 15 % gilt für Monatswerte und wäre hier dauerhaft „gelb“, ohne etwas über die Prognosegüte zu sagen |
+| 08.11. | **M3:** Heizgrenze aus Daten (ab 6 Zeiträumen, Raster 10–18 °C), Verteilung auf Tage mit dem Modell | deine Daten: 12,5 °C statt Norm 15 °C – bessere Anpassung, konsistente Tageswerte |
+| 08.11. | **M3:** Plausibilität mit Modell: Rückfrage bei Abweichung > max(3 σ, 2 m³) | Test mit deinen 24 Zeiträumen: 0 Fehlalarme; fängt Tippfehler, die unter 20 m³/Tag bleiben |
 | 08.11. | Optimierungen: nach dem Speichern keine zweite Übersichtsanfrage, beim Speichern bereits gelesene Daten weiterverwenden, `getDataRange` | Kaltstarts von Apps Script kosten bis ~15 s pro Anfrage; Übersichts-Cache erst nach Messung |
 
 ---
@@ -162,11 +165,17 @@ kWh_d = m³_d × Zustandszahl(d) × Brennwert(d) (DVGW G 685). Kosten_d = kWh_d 
 | ohne Einzugsintervall 01.–03.11.2025 (7 m³/Tag), θ_H 15 °C | 0,269 | 27 % |
 | ohne Einzugsintervall, θ_H 13 °C | – | 23 % |
 
-→ Ausreißer-Ausschluss und Heizgrenzen-Schätzung bringen viel; beides ist in M3 eingeplant.
+→ Ausreißer-Ausschluss und Heizgrenzen-Schätzung bringen viel; beides ist in M3 umgesetzt.
 
-### 6.5 Prognose bis Periodenende (M3)
+**Ergebnis M3 mit deinen eigenen Ablesungen (26.10.2025–08.11.2026, DWD, Platzhalter-Umrechnung):** Heizgrenze 12,5 °C,
+a = 0,355 m³ ≈ 3,9 kWh je Heizgradtag, keine Grundlast, 24 Zeiträume, > 1 Heizsaison, Unsicherheit a ±4 % → grün.
+Octopus 2025/26: Guthaben ≈ 155 € (80 %: 137–173 €). MVV 2026/27 bei 30 € Abschlag: Nachzahlung ≈ 431 €
+(80 %: 349–573 €) → Empfehlung 70 €/Monat (mit Puffer 77 €). Hauptunsicherheit: Wetter.
 
-Monte Carlo (N = 2000, fester Seed): Parameter aus der Unsicherheit ziehen; Vergangenheit gemessen; nicht abgelesene
+### 6.5 Prognose bis Periodenende (M3, umgesetzt in `Forecast.gs`)
+
+Monte Carlo (N = 4000, Seed aus Periodenname + Datum → am selben Tag reproduzierbar; weil der Verbrauch linear in a, b ist,
+werden Tagessummen je Wetterjahr vorab gebildet – ein Lauf kostet O(1)): Parameter aus der Unsicherheit ziehen; Vergangenheit gemessen; nicht abgelesene
 Tage mit echtem Wetter; Zukunft mit Wetter eines zufälligen Klimajahres (ganzer Verlauf); Umrechnungsfaktor ±3 %
 solange Schätzung, auf **alle** kWh der Periode; Kosten mit Tarifen; Saldo = Kosten − Abschläge.
 Ergebnis P10/P50/P90, Monatsbänder, Abschlagsempfehlung, größte Unsicherheitsquelle.
@@ -234,7 +243,7 @@ Grenze der Tests: Die Attrappe bildet Apps Script nach – echtes Verhalten prü
 |---|---|---|
 | **M1 Fundament** | Repo, CI, Schema/Setup, API, App (Erfassen, Warteschlange, Service Worker), Sicherheit | ✅ umgesetzt, Abnahme durch dich offen |
 | **M2 Wetter & Kosten** | DWD (Historie ab 2020 + täglich), Tage/Monate, Kosten taggenau, Abschläge, Saldo je Periode, Hinweise | ✅ umgesetzt |
-| **M3 Modell & Prognose** | Modell mit Heizgrenze, Monte Carlo, Ampel, Abschlagsempfehlung, Plausibilität mit Modell | offen |
+| **M3 Modell & Prognose** | Modell mit Heizgrenze, Monte Carlo, Ampel, Abschlagsempfehlung, Plausibilität mit Modell | ✅ umgesetzt |
 | **M4 Dashboard** | Diagramme (SVG), Periodenauswahl, Feinschliff | offen |
 
 ---

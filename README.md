@@ -7,10 +7,11 @@ und am PC im Browser. Kostenlos, kein eigener Server:
 App (GitHub Pages, Ordner docs/)  ──POST──►  Google Apps Script (Web-App)  ──►  Google Sheet „GasWerte“
 ```
 
-**Stand: V1 / Meilenstein M2** – Ablesungen erfassen (auch offline), Tagesmitteltemperatur der DWD-Station Mannheim
-(täglich automatisch, Historie ab 2020), Verbrauch nach Heizgradtagen auf Tage verteilt, kWh und Kosten taggenau,
-Abschläge und Saldo je Abrechnungszeitraum, Monatswerte im Vergleich zum Normal.
-Modell, Prognose bis Periodenende (M3) und Diagramme (M4) folgen. Plan und Entscheidungen: [KONZEPT.md](KONZEPT.md).
+**Stand: V1 / Meilenstein M3** – Ablesungen erfassen (auch offline), Tagesmitteltemperatur der DWD-Station Mannheim
+(täglich automatisch, Historie ab 2020), Verbrauchsmodell mit Heizgrenze aus deinen Daten, Verbrauch modellgewichtet auf
+Tage verteilt, kWh und Kosten taggenau, **Prognose bis Periodenende** (Nachzahlung/Guthaben mit 80-%-Bereich),
+**Abschlagsempfehlung**, Ampel zur Verlässlichkeit, Plausibilitätsprüfung mit dem Modell.
+Diagramme (M4) folgen. Plan und Entscheidungen: [KONZEPT.md](KONZEPT.md).
 
 Wetterdaten: Quelle **Deutscher Wetterdienst** (DWD Opendata, CC BY 4.0).
 
@@ -73,7 +74,7 @@ Nach ein bis zwei Minuten läuft die App unter **https://dyyp.github.io/Gas/**.
 ## Update des Skripts (bei neuen Versionen)
 
 1. `Code.gs` komplett durch die neue [`dist/Gaszaehler.gs`](dist/Gaszaehler.gs) ersetzen; `appsscript.json` ebenfalls,
-   wenn sie sich geändert hat (**bei M2 ja**: neue Berechtigungen). Speichern.
+   wenn sie sich geändert hat (seit M2 unverändert). Speichern.
 2. **`setup`** ausführen (ergänzt neue Tabs/Spalten/Einstellungen, ändert keine Daten). Bei neuen Berechtigungen fragt
    Google erneut – M2 braucht zusätzlich **„Verbindung zu einem externen Dienst“** (DWD-Wetter) und **„Ausführung, wenn
    du nicht anwesend bist“** (täglicher Lauf). Beim ersten Mal lädt `setup` die Wetter-Historie (dauert ein paar Sekunden).
@@ -106,7 +107,7 @@ Fehlende Tage (z. B. heute) werden vorläufig fortgeschrieben bzw. interpoliert 
 - [ ] Sheet → Gaszähler → Daten prüfen → keine unerwarteten Auffälligkeiten
 - [ ] Tab `Wetter` gefüllt ab 01.01.2020 bis gestern, `Tage`/`Monate` gefüllt, Protokoll-Eintrag „täglich“
 - [ ] Apps Script → **Trigger** (Wecker-Symbol): genau ein Trigger `taeglich`, täglich 13–14 Uhr
-- [ ] App → Auswertung: Abrechnungszeiträume mit Saldo, Monate mit HGT und Kosten
+- [ ] App → Auswertung: Prognose-Grundlage mit Ampel, Abrechnungszeiträume mit Saldo/Prognose/Empfehlung, Monate
 
 ---
 
@@ -141,3 +142,17 @@ node tools/render-icons.mjs        # Icons aus tools/assets/icon.svg
 | `dist/` | gebündeltes Backend zum Einfügen (generiert, CI prüft Aktualität) |
 | `tests/` | `unit/`, `backend/`, `repo/`, `e2e/`, `fakes/` |
 | `tools/` | Bündeln, lokaler Server, Icons |
+
+---
+
+## Wie die Prognose rechnet (Kurzfassung)
+
+- **Modell:** Verbrauch je Ablesezeitraum = a × Heizgradtage + b × Tage (gewichtet nach Länge, b ≥ 0). Die Heizgrenze
+  (10–18 °C) wird aus deinen Ablesungen geschätzt (Einstellung `Heizgrenze_aus_Daten`). Zeilen mit
+  Modell = „ausschließen“ zählen nicht.
+- **Prognose:** 4.000 Durchläufe je Periode mit zufälligen Modellparametern, zufälliger Tagesstreuung, dem Wetter eines
+  zufälligen Jahres seit 2020 für die Zukunft und ±3 % Unsicherheit der Umrechnung (bis die Rechnung da ist).
+  Angezeigt werden der Median und der Bereich, in dem das Ergebnis mit 80 % Wahrscheinlichkeit liegt.
+- **Abschlagsempfehlung:** Rate für die restlichen Monate, bei der der Median ausgeglichen wäre – „mit Puffer“ beim
+  80-%-Wert (dann droht nur noch mit 20 % Wahrscheinlichkeit eine Nachzahlung).
+- **Ampel:** grün ab ≥ 50 % einer normalen Heizsaison an Daten und ≤ 10 % Unsicherheit des Verbrauchs je Heizgradtag.

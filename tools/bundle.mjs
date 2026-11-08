@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const ORDER = ['Util', 'Schema', 'Domain', 'Calc', 'Store', 'Weather', 'Overview', 'Api', 'Job', 'Setup'];
+export const ORDER = ['Util', 'Schema', 'Domain', 'Model', 'Calc', 'Forecast', 'Store', 'Weather', 'Overview', 'Api', 'Job', 'Setup'];
 
 export function bundle() {
   const srcDir = path.join(root, 'apps-script', 'src');

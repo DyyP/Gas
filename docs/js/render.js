@@ -78,53 +78,96 @@ export function renderQueue(dom, entries, handlers) {
 }
 
 const STATUS_TEXT = { beendet: 'beendet', läuft: 'läuft', zukünftig: 'beginnt noch' };
+const UNCERTAINTY_TEXT = {
+  Wetter: 'das Wetter bis zum Periodenende',
+  Modell: 'dein Heizverhalten (Streuung um das Modell)',
+  Umrechnung: 'Brennwert und Zustandszahl (noch geschätzt)',
+};
+
+const euro0 = x => `${formatNumber(Math.round(Math.abs(x)), 0)} €`;
+/** Saldo als Text: negativ = Guthaben, positiv = Nachzahlung. */
+const saldoText = (v, approx = '') => (Math.abs(v) < 0.5 ? 'etwa ausgeglichen' : `${v < 0 ? 'Guthaben' : 'Nachzahlung'} ${approx}${euro0(v)}`);
+function bandText(lo, hi) {
+  if (lo >= 0) return `zwischen ${euro0(lo)} und ${euro0(hi)} Nachzahlung`;
+  if (hi <= 0) return `zwischen ${euro0(hi)} und ${euro0(lo)} Guthaben`;
+  return `zwischen ${euro0(lo)} Guthaben und ${euro0(hi)} Nachzahlung`;
+}
+
+function recommendationText(r) {
+  if (r.balanced > r.current) return `Abschlag ${euro0(r.balanced)} statt ${euro0(r.current)} pro Monat → etwa ausgeglichen (mit Puffer: ${euro0(r.safe)})`;
+  if (r.safe < r.current) return `Abschlag könnte auf ${euro0(r.safe)} sinken (inkl. Puffer) – derzeit ${euro0(r.current)}`;
+  return `Abschlag von ${euro0(r.current)} passt (ausgeglichen bei ${euro0(r.balanced)}, mit Puffer ${euro0(r.safe)})`;
+}
 
 /** Abrechnungszeiträume: laufende zuerst, dann die jüngsten beendeten. */
 export function renderPeriods(list, empty, periods) {
   const order = { läuft: 0, beendet: 1, zukünftig: 2 };
   const sorted = periods.slice().sort((a, b) => order[a.status] - order[b.status] || (a.start < b.start ? 1 : -1));
   empty.hidden = sorted.length > 0;
-  list.replaceChildren(
-    ...sorted.map(p => {
-      const head = el(
-        'div',
-        {},
-        el('h3', { text: p.name }),
-        el('p', {
-          class: 'muted small-text',
-          text: `${formatDate(p.start)}–${formatDate(p.end)} · ${STATUS_TEXT[p.status] || p.status}${p.status === 'läuft' ? ` (Tag ${p.elapsedDays} von ${p.totalDays})` : ''}`,
-        })
-      );
-      if (p.status === 'zukünftig') return el('div', { class: 'period' }, head);
-      const credit = p.balance < 0;
-      const amount = formatEuro(Math.abs(p.balance));
-      // Laufende Periode: nur Zwischenstand (Abschläge werden im Voraus gezahlt) – neutral, kein „Guthaben“
-      const balance =
-        p.status === 'läuft'
-          ? el('p', { class: 'balance-now', text: credit ? `Bisher ${amount} mehr gezahlt als verbraucht` : `Bisher ${amount} mehr verbraucht als gezahlt` })
-          : el('p', {
-              class: `balance ${credit ? 'credit' : 'due'}`,
-              text: Math.abs(p.balance) < 0.005 ? 'ausgeglichen' : `${credit ? 'Guthaben' : 'Nachzahlung'} ${amount}`,
-            });
-      const note =
-        p.status === 'beendet'
-          ? p.complete
-            ? 'Schätzung der Schlussrechnung (Stand der eingetragenen Werte).'
-            : 'Unvollständig: Für einen Teil der Periode fehlen Ablesungen.'
-          : `Stand heute – Verbrauch abgelesen bis ${p.measuredUntil ? formatDate(p.measuredUntil) : '–'}. Prognose bis Periodenende folgt.`;
-      const facts = el(
-        'dl',
-        { class: 'facts' },
-        el('dt', { text: 'Verbrauch' }),
-        el('dd', { text: `${formatNumber(p.kWh, 0)} kWh (${formatNumber(p.m3, 1)} m³)` }),
-        el('dt', { text: 'Kosten' }),
-        el('dd', { text: `${formatEuro(p.cost)} (Arbeit ${formatEuro(p.costWork)} + Grund ${formatEuro(p.costBase)})` }),
-        el('dt', { text: 'Abschläge' }),
-        el('dd', { text: `${formatEuro(p.paymentsPaid)} (${p.paymentsCount} von ${p.paymentsCountTotal})` })
-      );
-      return el('div', { class: 'period' }, head, balance, facts, el('p', { class: 'muted small-text', text: note }));
+  list.replaceChildren(...sorted.map(renderPeriod));
+}
+
+function renderPeriod(p) {
+  const head = el(
+    'div',
+    {},
+    el('h3', { text: p.name }),
+    el('p', {
+      class: 'muted small-text',
+      text: `${formatDate(p.start)}–${formatDate(p.end)} · ${STATUS_TEXT[p.status] || p.status}${p.status === 'läuft' ? ` (Tag ${p.elapsedDays} von ${p.totalDays})` : ''}`,
     })
   );
+  if (p.status === 'zukünftig') return el('div', { class: 'period' }, head);
+  const f = p.forecast;
+  const parts = [head];
+  const facts = el('dl', { class: 'facts' });
+  const fact = (k, v) => facts.append(el('dt', { text: k }), el('dd', { text: v }));
+
+  if (p.status === 'läuft' && f) {
+    parts.push(
+      el('p', { class: 'muted small-text label', text: `Prognose zum ${formatDate(p.end)}` }),
+      el('p', { class: `balance ${f.balance.p50 < 0 ? 'credit' : 'due'}`, text: saldoText(f.balance.p50, '≈ ') }),
+      el('p', { class: 'band', text: `80 % wahrscheinlich ${bandText(f.balance.p10, f.balance.p90)}` })
+    );
+    if (f.recommendation) parts.push(el('p', { class: 'reco', text: recommendationText(f.recommendation) }));
+    fact('Verbrauch', `≈ ${formatNumber(f.kWh.p50, 0)} kWh (${formatNumber(f.kWh.p10, 0)}–${formatNumber(f.kWh.p90, 0)})`);
+    fact('Kosten', `≈ ${euro0(f.cost.p50)} (${euro0(f.cost.p10)}–${euro0(f.cost.p90)})`);
+    fact('Abschläge', `${euro0(f.paymentsTotal)} (${f.paymentsCount} × geplant)`);
+    fact('Bisher', `${formatEuro(p.cost)} Kosten, ${formatEuro(p.paymentsPaid)} gezahlt`);
+  } else {
+    const balanceText = p.status === 'läuft'
+      ? p.balance < 0 ? `Bisher ${formatEuro(-p.balance)} mehr gezahlt als verbraucht` : `Bisher ${formatEuro(p.balance)} mehr verbraucht als gezahlt`
+      : saldoText(p.balance);
+    parts.push(el('p', { class: p.status === 'läuft' ? 'balance-now' : `balance ${p.balance < 0 ? 'credit' : 'due'}`, text: balanceText }));
+    if (f && f.balance.p90 - f.balance.p10 >= 1) parts.push(el('p', { class: 'band', text: `80 % wahrscheinlich ${bandText(f.balance.p10, f.balance.p90)}` }));
+    fact('Verbrauch', `${formatNumber(p.kWh, 0)} kWh (${formatNumber(p.m3, 1)} m³)`);
+    fact('Kosten', `${formatEuro(p.cost)} (Arbeit ${formatEuro(p.costWork)} + Grund ${formatEuro(p.costBase)})`);
+    fact('Abschläge', `${formatEuro(p.paymentsPaid)} (${p.paymentsCount} von ${p.paymentsCountTotal})`);
+  }
+  parts.push(facts);
+  const notes = [];
+  if (p.status === 'beendet') notes.push(p.complete ? 'Schätzung der Schlussrechnung.' : 'Für einen Teil der Periode fehlen Ablesungen – dort mit dem Modell geschätzt.');
+  if (p.status === 'läuft') notes.push(`Abgelesen bis ${p.measuredUntil ? formatDate(p.measuredUntil) : '–'}.`);
+  if (p.status === 'läuft' && !f) notes.push('Für eine Prognose fehlt noch das Modell (siehe oben).');
+  if (f && f.mainUncertainty) notes.push(`Größte Unsicherheit: ${UNCERTAINTY_TEXT[f.mainUncertainty]}.`);
+  parts.push(el('p', { class: 'muted small-text', text: notes.join(' ') }));
+  return el('div', { class: 'period' }, ...parts);
+}
+
+const RATING_CLASS = { grün: 'green', gelb: 'yellow', rot: 'red' };
+
+/** Modell & Verlässlichkeit (Ampel + Kennzahlen). */
+export function renderModel(textNode, factsNode, model, rating) {
+  textNode.textContent = rating ? rating.text : 'Noch keine Daten.';
+  textNode.className = `rating ${rating ? RATING_CLASS[rating.level] || '' : ''}`.trim();
+  factsNode.replaceChildren();
+  factsNode.hidden = !model;
+  if (!model) return;
+  const fact = (k, v) => factsNode.append(el('dt', { text: k }), el('dd', { text: v }));
+  fact('Je Heizgradtag', `${formatNumber(model.aKWh, 1)} kWh (${formatNumber(model.a, 3)} m³)`);
+  fact('Heizgrenze', `${formatNumber(model.theta, 1)} °C (${model.thetaSource === 'Daten' ? 'aus deinen Ablesungen' : 'aus den Einstellungen'})`);
+  fact('Grundlast', model.b >= 0.005 ? `${formatNumber(model.b, 2)} m³/Tag` : 'keine (nur Heizung)');
+  fact('Grundlage', `${model.n} Ablesezeiträume${model.excluded ? ` (+${model.excluded} ausgeschlossen)` : ''}`);
 }
 
 /** Monatstabelle, neueste zuerst. */

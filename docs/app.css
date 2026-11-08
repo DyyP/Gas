@@ -158,3 +158,11 @@ dialog p { margin: 0 0 14px; }
 .balance.credit { color: var(--ok); }
 .balance.due { color: var(--warn); }
 .balance-now { font-weight: 600; margin: 8px 0 2px; font-variant-numeric: tabular-nums; }
+.period .label { margin: 10px 0 0; }
+.band { margin: 0 0 6px; font-variant-numeric: tabular-nums; }
+.reco { margin: 8px 0; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); font-weight: 600; }
+.rating { margin: 0 0 10px; padding-left: 22px; position: relative; }
+.rating::before { content: ""; position: absolute; left: 0; top: 0.35em; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
+.rating.green::before { background: var(--ok); }
+.rating.yellow::before { background: #f59f00; }
+.rating.red::before { background: var(--error); }

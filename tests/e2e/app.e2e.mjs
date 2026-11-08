@@ -41,7 +41,7 @@ function mockServer() {
       intervals.unshift({ from: a.date, to: b.date, days, m3, m3PerDay: m3 / days, kWh: m3 * 10.8, kWhPerDay: (m3 * 10.8) / days, meter: '', excluded: false, conversion: 'Platzhalter' });
     }
     return {
-      generatedAt: new Date().toISOString(), today: new Date().toISOString().slice(0, 10), api: 1, schema: 2,
+      generatedAt: new Date().toISOString(), today: new Date().toISOString().slice(0, 10), api: 1, schema: 3,
       settings: { minDate: '2025-11-01', maxPerDay: 20, meter: '' },
       last: last && { date: last.date, time: last.time, value: last.value, meter: '' },
       readingsCount: m.readings.length, intervals,
@@ -50,10 +50,20 @@ function mockServer() {
         { month: '2026-11', days: 8, hgt: 72.6, hgtNormal: 49.3, m3: 8.105, kWh: 87.9, cost: 16.31, coverage: 0.938 },
       ],
       periods: [
-        { name: 'Octopus 2025/26', start: '2025-11-01', end: '2026-10-31', status: 'beendet', complete: true, totalDays: 365, elapsedDays: 365, coveredDays: 365, measuredUntil: '2026-10-31', m3: 429.403, kWh: 4658.2, costWork: 464.88, costBase: 173.88, cost: 638.76, paymentsCount: 12, paymentsPaid: 793.08, paymentsCountTotal: 12, paymentsTotal: 793.08, balance: -154.32, tariffMissing: false },
-        { name: 'MVV 2026/27', start: '2026-11-01', end: '2027-10-31', status: 'läuft', complete: false, totalDays: 365, elapsedDays: 8, coveredDays: 7.5, measuredUntil: '2026-11-07', m3: 8.105, kWh: 87.9, costWork: 12.4, costBase: 3.91, cost: 16.31, paymentsCount: 1, paymentsPaid: 30, paymentsCountTotal: 12, paymentsTotal: 360, balance: -13.69, tariffMissing: false },
+        {
+          name: 'Octopus 2025/26', start: '2025-11-01', end: '2026-10-31', status: 'beendet', complete: true, totalDays: 365, elapsedDays: 365, measuredUntil: '2026-10-31',
+          m3: 429.403, kWh: 4658.2, costWork: 464.88, costBase: 173.88, cost: 638.76, paymentsCount: 12, paymentsPaid: 793.08, paymentsCountTotal: 12, balance: -154.32,
+          forecast: { kWh: { p10: 4474, p50: 4652, p80: 4766, p90: 4833 }, cost: { p10: 620.39, p50: 638.19, p80: 649.57, p90: 656.2 }, balance: { p10: -172.69, p50: -154.89, p80: -143.51, p90: -136.88 }, paymentsTotal: 793.08, paymentsCount: 12, measuredShare: 1, unknownDays: 0, climateYears: 6, mainUncertainty: 'Umrechnung', recommendation: null },
+        },
+        {
+          name: 'MVV 2026/27', start: '2026-11-01', end: '2027-10-31', status: 'läuft', complete: false, totalDays: 365, elapsedDays: 8, measuredUntil: '2026-11-07',
+          m3: 8.105, kWh: 87.9, costWork: 12.4, costBase: 3.91, cost: 16.31, paymentsCount: 1, paymentsPaid: 30, paymentsCountTotal: 12, balance: -13.69,
+          forecast: { kWh: { p10: 3764, p50: 4345, p80: 4920, p90: 5348 }, cost: { p10: 709.28, p50: 791.26, p80: 872.32, p90: 932.59 }, balance: { p10: 349.28, p50: 431.26, p80: 512.32, p90: 572.59 }, paymentsTotal: 360, paymentsCount: 12, measuredShare: 0.02, unknownDays: 357.5, climateYears: 6, mainUncertainty: 'Wetter', recommendation: { remaining: 11, current: 30, balanced: 70, safe: 77 } },
+        },
       ],
-      weather: { last: '2026-11-07', station: '05906', source: 'Deutscher Wetterdienst' },
+      weather: { last: '2026-11-07', station: '05906' },
+      model: { a: 0.3554, aKWh: 3.855, b: 0, theta: 12.5, thetaSource: 'Daten', n: 24, excluded: 0, coverage: 1.091, cv: 0.291, relSeA: 0.039 },
+      rating: { level: 'grün', text: 'Belastbar: 24 Ablesezeiträume, mehr als eine ganze Heizsaison. Streuung um das Modell 29 %, Unsicherheit des Verbrauchs je Heizgradtag ±4 %.' },
       hints: [{ level: 'info', text: 'kWh mit Platzhalter' }],
     };
   };
@@ -208,10 +218,16 @@ test('Auswertung und Einstellungen', async () => {
   assert.match(await page.textContent('#intervalRows'), /01\.11\.–03\.11\.2025/);
   const periods = await page.textContent('#periodList');
   assert.match(periods, /MVV 2026\/27.*läuft \(Tag 8 von 365\)/s);
-  assert.match(periods, /Guthaben 154,32 €/);
-  assert.match(periods, /Bisher 13,69 € mehr gezahlt als verbraucht/);
-  assert.doesNotMatch(periods, /Guthaben 13,69/);
+  assert.match(periods, /Guthaben 154 €/);
+  assert.match(periods, /80 % wahrscheinlich zwischen 137 € und 173 € Guthaben/);
+  assert.match(periods, /Prognose zum 31\.10\.2027.*Nachzahlung ≈ 431 €/s);
+  assert.match(periods, /zwischen 349 € und 573 € Nachzahlung/);
+  assert.match(periods, /Abschlag 70 € statt 30 € pro Monat → etwa ausgeglichen \(mit Puffer: 77 €\)/);
+  assert.match(periods, /Größte Unsicherheit: das Wetter bis zum Periodenende/);
   assert.match(periods, /Schätzung der Schlussrechnung/);
+  assert.match(await page.textContent('#ratingText'), /Belastbar: 24 Ablesezeiträume/);
+  assert.match(await page.getAttribute('#ratingText', 'class'), /green/);
+  assert.match(await page.textContent('#modelFacts'), /3,9 kWh .*12,5 °C \(aus deinen Ablesungen\).*keine \(nur Heizung\)/s);
   assert.ok(periods.indexOf('MVV') < periods.indexOf('Octopus'), 'laufende Periode zuerst');
   const months = await page.textContent('#monthRows');
   assert.match(months, /Nov\.? 26 \*/);
@@ -234,7 +250,7 @@ test('Altes Server-Skript wird klar gemeldet statt „keine Periode“', async (
     const o = orig();
     delete o.periods;
     delete o.months;
-    o.schema = 1;
+    o.schema = 2;
     return o;
   };
   await page.reload();
