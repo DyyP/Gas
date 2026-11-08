@@ -186,3 +186,24 @@ test('API: Übersicht liefert Modell, Ampel, Prognose; Plausibilität mit Modell
   const ok = send(3.6);
   assert.equal(ok.data.saved, 'new', 'erwartbarer Wert geht durch');
 });
+
+test('Prognoseverlauf fürs Diagramm: steigt, endet beim Prognosewert, Ist-Werte bis zur letzten Ablesung, Abschlagstreppe', () => {
+  const r = compute({ synth: { a: 0.35, b: 0, theta: 13 } });
+  const f = r.periods[1].forecast;
+  assert.equal(f.measuredUntil, '2026-11-04', 'Ablesung am 05.11. 12:00 → letzter voller Tag 04.11.');
+  assert.equal(f.actual.at(-1).date, f.measuredUntil);
+  assert.equal(f.trajectory[0].date, f.measuredUntil, 'Prognose setzt an der letzten Ablesung an');
+  near(f.trajectory[0].p50, f.actual.at(-1).cost, 0.5);
+  assert.equal(f.trajectory.at(-1).date, '2027-10-31');
+  near(f.trajectory.at(-1).p50, f.cost.p50, 0.02 * f.cost.p50);
+  for (let i = 1; i < f.trajectory.length; i++) {
+    assert.ok(f.trajectory[i].p50 >= f.trajectory[i - 1].p50 - 1e-6, 'kumulierte Kosten fallen nie');
+    assert.ok(f.trajectory[i].p10 <= f.trajectory[i].p50 && f.trajectory[i].p50 <= f.trajectory[i].p90);
+  }
+  assert.ok(f.trajectory.some(t => t.date === '2027-01-31'), 'Monatsenden als Stützpunkte');
+  assert.equal(f.paymentSteps.length, 12);
+  near(f.paymentSteps.at(-1).sum, f.paymentsTotal, 1e-9);
+  const alt = r.periods[0].forecast;
+  assert.equal(alt.measuredUntil, '2026-10-31');
+  assert.equal(alt.trajectory.length, 1, 'beendet: nur der Endpunkt mit Band');
+});

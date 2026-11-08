@@ -17,6 +17,7 @@ const SHELL = [
   './js/api.js',
   './js/queue.js',
   './js/render.js',
+  './js/charts.js',
   './icons/apple-touch-icon.png',
   './icons/icon-192.png',
   './icons/icon-512.png',

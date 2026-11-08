@@ -1,5 +1,6 @@
 // Darstellung – nur DOM-Methoden und textContent, nie HTML-Strings mit Daten.
 import { formatNumber, formatDate, formatDateShort, daysBetween, relativeDays, formatDateTime, formatMonth, formatEuro } from './format.js';
+import { periodChart } from './charts.js';
 
 export function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -108,50 +109,40 @@ export function renderPeriods(list, empty, periods) {
 }
 
 function renderPeriod(p) {
-  const head = el(
-    'div',
-    {},
-    el('h3', { text: p.name }),
-    el('p', {
-      class: 'muted small-text',
-      text: `${formatDate(p.start)}–${formatDate(p.end)} · ${STATUS_TEXT[p.status] || p.status}${p.status === 'läuft' ? ` (Tag ${p.elapsedDays} von ${p.totalDays})` : ''}`,
-    })
-  );
+  const status = `${formatDate(p.start)}–${formatDate(p.end)} · ${STATUS_TEXT[p.status] || p.status}`;
+  const head = el('div', { class: 'period-head' }, el('div', {}, el('h3', { text: p.name }), el('p', { class: 'muted small-text', text: status })));
+  if (p.status === 'läuft') head.append(el('span', { class: 'pill pill-neutral', text: `Tag ${p.elapsedDays}/${p.totalDays}` }));
   if (p.status === 'zukünftig') return el('div', { class: 'period' }, head);
   const f = p.forecast;
-  const parts = [head];
+  const body = el('div', { class: 'period-body' });
   const facts = el('dl', { class: 'facts' });
   const fact = (k, v) => facts.append(el('dt', { text: k }), el('dd', { text: v }));
 
+  if (!f) {
+    const text = p.status === 'läuft'
+      ? p.balance < 0 ? `Bisher ${formatEuro(-p.balance)} mehr gezahlt als verbraucht` : `Bisher ${formatEuro(p.balance)} mehr verbraucht als gezahlt`
+      : saldoText(p.balance);
+    body.append(el('p', { class: p.status === 'läuft' ? 'balance-now' : `balance ${p.balance < 0 ? 'credit' : 'due'}`, text }));
+  }
   if (p.status === 'läuft' && f) {
-    parts.push(
-      el('p', { class: 'muted small-text label', text: `Prognose zum ${formatDate(p.end)}` }),
-      el('p', { class: `balance ${f.balance.p50 < 0 ? 'credit' : 'due'}`, text: saldoText(f.balance.p50, '≈ ') }),
-      el('p', { class: 'band', text: `80 % wahrscheinlich ${bandText(f.balance.p10, f.balance.p90)}` })
-    );
-    if (f.recommendation) parts.push(el('p', { class: 'reco', text: recommendationText(f.recommendation) }));
+    if (f.recommendation) body.append(el('p', { class: 'reco', text: recommendationText(f.recommendation) }));
     fact('Verbrauch', `≈ ${formatNumber(f.kWh.p50, 0)} kWh (${formatNumber(f.kWh.p10, 0)}–${formatNumber(f.kWh.p90, 0)})`);
     fact('Kosten', `≈ ${euro0(f.cost.p50)} (${euro0(f.cost.p10)}–${euro0(f.cost.p90)})`);
     fact('Abschläge', `${euro0(f.paymentsTotal)} (${f.paymentsCount} × geplant)`);
     fact('Bisher', `${formatEuro(p.cost)} Kosten, ${formatEuro(p.paymentsPaid)} gezahlt`);
   } else {
-    const balanceText = p.status === 'läuft'
-      ? p.balance < 0 ? `Bisher ${formatEuro(-p.balance)} mehr gezahlt als verbraucht` : `Bisher ${formatEuro(p.balance)} mehr verbraucht als gezahlt`
-      : saldoText(p.balance);
-    parts.push(el('p', { class: p.status === 'läuft' ? 'balance-now' : `balance ${p.balance < 0 ? 'credit' : 'due'}`, text: balanceText }));
-    if (f && f.balance.p90 - f.balance.p10 >= 1) parts.push(el('p', { class: 'band', text: `80 % wahrscheinlich ${bandText(f.balance.p10, f.balance.p90)}` }));
     fact('Verbrauch', `${formatNumber(p.kWh, 0)} kWh (${formatNumber(p.m3, 1)} m³)`);
     fact('Kosten', `${formatEuro(p.cost)} (Arbeit ${formatEuro(p.costWork)} + Grund ${formatEuro(p.costBase)})`);
     fact('Abschläge', `${formatEuro(p.paymentsPaid)} (${p.paymentsCount} von ${p.paymentsCountTotal})`);
   }
-  parts.push(facts);
+  body.append(facts);
   const notes = [];
   if (p.status === 'beendet') notes.push(p.complete ? 'Schätzung der Schlussrechnung.' : 'Für einen Teil der Periode fehlen Ablesungen – dort mit dem Modell geschätzt.');
   if (p.status === 'läuft') notes.push(`Abgelesen bis ${p.measuredUntil ? formatDate(p.measuredUntil) : '–'}.`);
   if (p.status === 'läuft' && !f) notes.push('Für eine Prognose fehlt noch das Modell (siehe oben).');
   if (f && f.mainUncertainty) notes.push(`Größte Unsicherheit: ${UNCERTAINTY_TEXT[f.mainUncertainty]}.`);
-  parts.push(el('p', { class: 'muted small-text', text: notes.join(' ') }));
-  return el('div', { class: 'period' }, ...parts);
+  body.append(el('p', { class: 'muted small-text', text: notes.join(' ') }));
+  return el('div', { class: 'period' }, head, f ? periodChart(p) : null, body);
 }
 
 const RATING_CLASS = { grün: 'green', gelb: 'yellow', rot: 'red' };

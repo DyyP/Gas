@@ -53,12 +53,18 @@ function mockServer() {
         {
           name: 'Octopus 2025/26', start: '2025-11-01', end: '2026-10-31', status: 'beendet', complete: true, totalDays: 365, elapsedDays: 365, measuredUntil: '2026-10-31',
           m3: 429.403, kWh: 4658.2, costWork: 464.88, costBase: 173.88, cost: 638.76, paymentsCount: 12, paymentsPaid: 793.08, paymentsCountTotal: 12, balance: -154.32,
-          forecast: { kWh: { p10: 4474, p50: 4652, p80: 4766, p90: 4833 }, cost: { p10: 620.39, p50: 638.19, p80: 649.57, p90: 656.2 }, balance: { p10: -172.69, p50: -154.89, p80: -143.51, p90: -136.88 }, paymentsTotal: 793.08, paymentsCount: 12, measuredShare: 1, unknownDays: 0, climateYears: 6, mainUncertainty: 'Umrechnung', recommendation: null },
+          forecast: { kWh: { p10: 4474, p50: 4652, p80: 4766, p90: 4833 }, cost: { p10: 620.39, p50: 638.19, p80: 649.57, p90: 656.2 }, balance: { p10: -172.69, p50: -154.89, p80: -143.51, p90: -136.88 }, paymentsTotal: 793.08, paymentsCount: 12, measuredShare: 1, unknownDays: 0, climateYears: 6, mainUncertainty: 'Umrechnung', recommendation: null,
+            measuredUntil: '2026-10-31', actual: [{ date: '2025-11-01', cost: 1.2 }, { date: '2026-02-01', cost: 330 }, { date: '2026-10-31', cost: 638.29 }],
+            trajectory: [{ date: '2026-10-31', p10: 620.39, p50: 638.19, p90: 656.2 }],
+            paymentSteps: Array.from({ length: 12 }, (_, i) => ({ date: new Date(Date.UTC(2025, 10 + i, 14)).toISOString().slice(0, 10), sum: Math.round(66.09 * (i + 1) * 100) / 100 })) },
         },
         {
           name: 'MVV 2026/27', start: '2026-11-01', end: '2027-10-31', status: 'läuft', complete: false, totalDays: 365, elapsedDays: 8, measuredUntil: '2026-11-07',
           m3: 8.105, kWh: 87.9, costWork: 12.4, costBase: 3.91, cost: 16.31, paymentsCount: 1, paymentsPaid: 30, paymentsCountTotal: 12, balance: -13.69,
-          forecast: { kWh: { p10: 3764, p50: 4345, p80: 4920, p90: 5348 }, cost: { p10: 709.28, p50: 791.26, p80: 872.32, p90: 932.59 }, balance: { p10: 349.28, p50: 431.26, p80: 512.32, p90: 572.59 }, paymentsTotal: 360, paymentsCount: 12, measuredShare: 0.02, unknownDays: 357.5, climateYears: 6, mainUncertainty: 'Wetter', recommendation: { remaining: 11, current: 30, balanced: 70, safe: 77 } },
+          forecast: { kWh: { p10: 3764, p50: 4345, p80: 4920, p90: 5348 }, cost: { p10: 709.28, p50: 791.26, p80: 872.32, p90: 932.59 }, balance: { p10: 349.28, p50: 431.26, p80: 512.32, p90: 572.59 }, paymentsTotal: 360, paymentsCount: 12, measuredShare: 0.02, unknownDays: 357.5, climateYears: 6, mainUncertainty: 'Wetter', recommendation: { remaining: 11, current: 30, balanced: 70, safe: 77 },
+            measuredUntil: '2026-11-07', actual: [{ date: '2026-11-01', cost: 2 }, { date: '2026-11-07', cost: 16.47 }],
+            trajectory: [{ date: '2026-11-07', p10: 16.4, p50: 16.5, p90: 16.6 }, { date: '2027-01-31', p10: 250, p50: 290, p90: 330 }, { date: '2027-10-31', p10: 709.28, p50: 791.26, p90: 932.59 }],
+            paymentSteps: Array.from({ length: 12 }, (_, i) => ({ date: new Date(Date.UTC(2026, 10 + i, 1)).toISOString().slice(0, 10), sum: 30 * (i + 1) })) },
         },
       ],
       weather: { last: '2026-11-07', station: '05906' },
@@ -217,11 +223,15 @@ test('Auswertung und Einstellungen', async () => {
   await page.locator('#intervalRows tr').first().waitFor();
   assert.match(await page.textContent('#intervalRows'), /01\.11\.–03\.11\.2025/);
   const periods = await page.textContent('#periodList');
-  assert.match(periods, /MVV 2026\/27.*läuft \(Tag 8 von 365\)/s);
-  assert.match(periods, /Guthaben 154 €/);
-  assert.match(periods, /80 % wahrscheinlich zwischen 137 € und 173 € Guthaben/);
-  assert.match(periods, /Prognose zum 31\.10\.2027.*Nachzahlung ≈ 431 €/s);
-  assert.match(periods, /zwischen 349 € und 573 € Nachzahlung/);
+  assert.match(periods, /MVV 2026\/27.*läuft\s*Tag 8\/365/s);
+  assert.match(periods, /80 % sicher: 137–173 €/);
+  assert.match(periods, /Prognose · 31\.10\.2027\s*431 €\s*▲ Nachzahlung/);
+  assert.match(periods, /80 % sicher: 349–573 €/);
+  assert.match(periods, /Ergebnis · 31\.10\.2026\s*155 €\s*▼ Guthaben/);
+  assert.equal(await page.locator('.pchart-svg').count(), 2, 'je Periode ein Diagramm');
+  assert.match(await page.getAttribute('.pchart-svg >> nth=0', 'aria-label'), /MVV 2026\/27: Nachzahlung etwa 431 €/);
+  assert.equal(await page.locator('.gap.bad').count(), 1, 'Lücke Nachzahlung weinrot');
+  assert.equal(await page.locator('.gap.good').count(), 1, 'Lücke Guthaben grün');
   assert.match(periods, /Abschlag 70 € statt 30 € pro Monat → etwa ausgeglichen \(mit Puffer: 77 €\)/);
   assert.match(periods, /Größte Unsicherheit: das Wetter bis zum Periodenende/);
   assert.match(periods, /Schätzung der Schlussrechnung/);

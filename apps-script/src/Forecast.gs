@@ -81,6 +81,27 @@ function forecastPeriod_(p, ctx) {
   const acc = { kWhM: 0, costM: 0, m3M: 0, base: 0, M1: 0, MH: 0, K1: 0, KH: 0, C1: 0, CH: 0 };
   let tariffOk = true;
 
+  // Verlauf fürs Diagramm: Ist-Kosten bis zur letzten vollen Ablesung, Prognose an Stichtagen (Monatsenden, heute, Ende)
+  let measuredUntil = null;
+  for (const d of ctx.days) if (d.date >= p.start && d.date <= pastEnd && d.covered > 0.999) measuredUntil = d.date;
+  const checkpoints = {};
+  for (let y = Number(p.start.slice(0, 4)), mo = Number(p.start.slice(5, 7)); ; ) {
+    const iso = y + '-' + pad2_(mo) + '-' + pad2_(daysInMonth_(y, mo));
+    if (iso >= p.end) break;
+    checkpoints[iso] = true;
+    if (++mo > 12) {
+      mo = 1;
+      y++;
+    }
+  }
+  [p.end, ctx.today <= p.end ? ctx.today : null, measuredUntil].forEach(d => d && d >= p.start && (checkpoints[d] = true));
+  const snaps = [];
+  const actual = [];
+  const snapshot = (iso, perYear) => {
+    if (!checkpoints[iso]) return;
+    snaps.push({ date: iso, base: acc.base, costM: acc.costM, C1: acc.C1, CH: acc.CH, years: perYear ? perYear.map(py => py.CH) : null });
+  };
+
   // Vergangenheit: gemessene Anteile + nicht abgelesene Anteile mit echtem Wetter
   for (const d of ctx.days) {
     if (d.date < p.start || d.date > pastEnd) continue;
@@ -101,6 +122,10 @@ function forecastPeriod_(p, ctx) {
       acc.C1 += u * f * ap;
       acc.CH += u * f * ap * h;
     }
+    if (measuredUntil && d.date <= measuredUntil && (dayNumber_(d.date) - dayNumber_(p.start)) % 7 === 0 || d.date === measuredUntil) {
+      actual.push({ date: d.date, cost: round_(acc.costM + acc.base, 2) });
+    }
+    snapshot(d.date, null);
   }
 
   // Zukunft: Wetter je Klimajahr
@@ -123,6 +148,7 @@ function forecastPeriod_(p, ctx) {
       py.KH += f * h;
       py.CH += f * ap * h;
     });
+    snapshot(iso, perYear);
   }
   if (!tariffOk) return null;
   if (!m && acc.M1 > 0) return null;
@@ -137,7 +163,9 @@ function forecastPeriod_(p, ctx) {
   const a0 = m ? m.a : 0;
   const b0 = m ? m.b : 0;
 
-  /** Ein Lauf; opts schaltet einzelne Unsicherheiten ab (für „größte Unsicherheit“). */
+  const traj = snaps.map(() => []);
+
+  /** Ein Lauf; opts schaltet einzelne Unsicherheiten ab (für „größte Unsicherheit“), opts.track sammelt den Verlauf. */
   function run(opts) {
     let a = a0;
     let b = b0;
@@ -153,7 +181,8 @@ function forecastPeriod_(p, ctx) {
       a = Math.max(0, a0 + l11 * z1);
       b = Math.max(0, b0 + l21 * z1 + l22 * z2);
     }
-    const yr = opts.weather ? perYear[Math.floor(rnd() * perYear.length)] : avgYear;
+    const yi = opts.weather ? Math.floor(rnd() * perYear.length) : -1;
+    const yr = yi >= 0 ? perYear[yi] : avgYear;
     const MH = acc.MH + yr.MH;
     const mean3 = b * acc.M1 + a * MH;
     const noise = opts.model ? Math.sqrt(s2 * acc.M1) * normal_(rnd) : 0;
@@ -164,11 +193,17 @@ function forecastPeriod_(p, ctx) {
     const conv = opts.conversion ? 1 + ctx.u * normal_(rnd) : 1;
     const kWh = conv * (acc.kWhM + kWhU);
     const cost = conv * (acc.costM + costU) + acc.base;
+    if (opts.track) {
+      snaps.forEach((sn, k) => {
+        const chf = sn.years ? (yi >= 0 ? sn.years[yi] : sn.years.reduce((x, v) => x + v, 0) / sn.years.length) : 0;
+        traj[k].push(conv * (sn.costM + scale * (b * sn.C1 + a * (sn.CH + chf))) + sn.base);
+      });
+    }
     return { m3: acc.m3M + m3U, kWh: kWh, cost: cost, balance: cost - paymentsTotal };
   }
 
   const full = [];
-  for (let i = 0; i < MC_RUNS; i++) full.push(run({ model: true, weather: true, conversion: true }));
+  for (let i = 0; i < MC_RUNS; i++) full.push(run({ model: true, weather: true, conversion: true, track: true }));
   const spread = opts => {
     const v = [];
     for (let i = 0; i < MC_RUNS / 4; i++) v.push(run(opts).balance);
@@ -196,6 +231,13 @@ function forecastPeriod_(p, ctx) {
     unknownDays: round_(acc.M1, 1),
     climateYears: years.length,
     mainUncertainty: sources[0].width >= 1 ? sources[0].name : null,
+    measuredUntil: measuredUntil,
+    actual: actual,
+    trajectory: snaps
+      .map((sn, k) => Object.assign({ date: sn.date }, band_(traj[k])))
+      .filter(t => !measuredUntil || t.date >= measuredUntil)
+      .map(t => ({ date: t.date, p10: t.p10, p50: t.p50, p90: t.p90 })),
+    paymentSteps: all.reduce((list, x) => list.concat([{ date: x.date, sum: round_((list.length ? list[list.length - 1].sum : 0) + x.amount, 2) }]), []),
     recommendation:
       p.start <= ctx.today && remaining > 0
         ? { remaining: remaining, current: all[all.length - 1].amount, balanced: perRate(cost.p50), safe: perRate(cost.p80) }
