@@ -86,6 +86,8 @@ function mockServer() {
           start: '2026-08-01', end: '2027-07-31', share: 0.064, doneKWh: 160, remainingKWh: 4169, remainingEur: 588,
           marks: [['08', 0], ['09', 0], ['10', 0.005], ['11', 0.038], ['12', 0.187], ['01', 0.402], ['02', 0.639], ['03', 0.801], ['04', 0.926], ['05', 0.992], ['06', 1], ['07', 1]]
             .map(([mo, share]) => ({ month: `${mo >= '08' ? 2026 : 2027}-${mo}`, share })),
+          months: [['08', 0], ['09', 22], ['10', 150], ['11', 420], ['12', 640], ['01', 700], ['02', 560], ['03', 450], ['04', 260], ['05', 70], ['06', 0], ['07', 0]]
+            .map(([mo, kWhNormal]) => ({ month: `${mo >= '08' ? 2026 : 2027}-${mo}`, kWhNormal })),
         },
       },
     };
@@ -308,7 +310,13 @@ test('Analyse: alle fünf Karten, Tabellen aufklappbar, Tooltip per Tippen', asy
   assert.deepEqual(order, ['aHeat', 'aMonths', 'aDayCost', 'aCalendar', 'aSeason']);
   assert.equal(await page.locator('#aHeat circle.pt').count(), 4);
   assert.match(await page.textContent('#aHeat'), /Je Grad kälter brauchst du 3,9 kWh mehr am Tag \(≈ 0,54 €\)/);
-  assert.match(await page.textContent('#aMonths'), /2 Monaten: 1\.164 kWh – ▼ 19 % weniger als bei Normalwetter/);
+  // Monate je Heizjahr: laufendes zuerst (Nov. gemessen, Dez.–Jul. noch offen), Umschalten aufs Vorjahr
+  assert.match(await page.textContent('#aMonths'), /Heizjahr 2026\/27 bisher: 88 kWh – ▼ 54 % weniger als bei Normalwetter/);
+  assert.equal(await page.locator('#aMonths rect.nbar.open').count(), 6, 'Dez.–Mai als „noch offen“ (Juni/Juli normal 0 → kein Balken)');
+  await page.click('#aMonths .seg button >> text=2025/26');
+  assert.equal(await page.getAttribute('#aMonths .seg button >> text=2025/26', 'aria-pressed'), 'true');
+  assert.match(await page.textContent('#aMonths'), /Heizjahr 2025\/26 \(Daten ab Dez\.? 25\): 1\.076 kWh – ▼ 14 % weniger/);
+  assert.equal(await page.locator('#aMonths rect.nbar.open').count(), 0);
   assert.match(await page.textContent('#aDayCost'), /Heute \(3,5\s°C\) kostet ein Tag etwa 5,38 €/);
   assert.match(await page.textContent('#aDayCost'), /▼ 708 kWh.*▼ 100 €/s);
   assert.equal(await page.locator('#aCalendar rect.today-box').count(), 1);

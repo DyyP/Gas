@@ -16,10 +16,10 @@ function head(node, kicker, title, lead) {
   if (lead) node.append(html('p', 'lead', lead));
 }
 
-/** Absatz mit fett hervorgehobenen Teilen: ['Je Grad ', ['+3,9 kWh'], ' mehr']. */
+/** Absatz mit fett hervorgehobenen Teilen: ['Je Grad ', ['+3,9 kWh'], ' mehr'] – Hervorhebungen brechen nicht um. */
 function rich(cls, parts) {
   const p = html('p', cls);
-  for (const part of parts) if (part) p.append(Array.isArray(part) ? html('b', '', part[0]) : document.createTextNode(part));
+  for (const part of parts) if (part) p.append(Array.isArray(part) ? html('b', '', part[0].replace(/ /g, '\u00a0')) : document.createTextNode(part));
   return p;
 }
 
@@ -49,7 +49,7 @@ export function renderAnalyse(dom, o) {
   const model = (o && o.model) || null;
   const shown = {
     aHeat: !!ins && heatCurve(dom.aHeat, o.intervals || [], model, ins),
-    aMonths: !!ins && monthsCard(dom.aMonths, o.months || [], model),
+    aMonths: !!ins && monthsCard(dom.aMonths, o.months || [], model, ins.season || null),
     aDayCost: !!ins && dayCostCard(dom.aDayCost, model, ins),
     aCalendar: !!ins && calendarCard(dom.aCalendar, ins.daily || []),
     aSeason: !!ins && seasonCard(dom.aSeason, ins),
@@ -135,22 +135,59 @@ function heatCurve(node, intervals, model, ins) {
   return true;
 }
 
-// ---------- 6 · Monate gegen normales Wetter ----------
-function monthsCard(node, months, model) {
-  const list = months.filter(m => typeof m.kWhNormal === 'number').slice(-12);
-  if (list.length < 2) return false;
-  head(node, 'Monate', 'Du gegen normales Wetter', 'Bernstein: dein Verbrauch. Schraffiert: was dein Modell bei normalem Wetter (Mittel seit 2020) erwarten würde.');
+// ---------- 6 · Monate gegen normales Wetter, je Heizjahr (Aug–Jul) ----------
+const heatYear = ym => (Number(ym.slice(5, 7)) >= 8 ? Number(ym.slice(0, 4)) : Number(ym.slice(0, 4)) - 1);
+const yearLabel = y => `${y}/${String(y + 1).slice(2)}`;
+let shownYear = null; // gewähltes Heizjahr (Startjahr); bleibt beim Neuzeichnen erhalten
+
+function monthsCard(node, months, model, season) {
+  const withData = months.filter(m => typeof m.kWhNormal === 'number');
+  const current = season ? Number(season.start.slice(0, 4)) : null;
+  const years = [...new Set(withData.map(m => heatYear(m.month)).concat(current === null ? [] : [current]))].sort();
+  if (!withData.length || !years.length) return false;
+  if (!years.includes(shownYear)) shownYear = current !== null ? current : years[years.length - 1];
+  const y0 = shownYear;
+  const lastData = withData[withData.length - 1].month;
+  const future = new Map(((season && Number(season.start.slice(0, 4)) === y0 && season.months) || []).map(x => [x.month, x.kWhNormal]));
+  // 12 feste Plätze Aug … Jul
+  const slots = Array.from({ length: 12 }, (_, i) => {
+    const mo = ((7 + i) % 12) + 1;
+    const ym = `${i < 5 ? y0 : y0 + 1}-${String(mo).padStart(2, '0')}`;
+    const m = withData.find(x => x.month === ym) || null;
+    const open = !m && ym > lastData && future.has(ym) ? future.get(ym) : null;
+    return { ym, mo, m, open };
+  });
+  const list = slots.filter(x => x.m).map(x => x.m);
+
+  head(node, 'Monate · Heizjahr', 'Du gegen normales Wetter', 'Bernstein: dein Verbrauch. Schraffiert: was dein Modell bei normalem Wetter (Mittel seit 2020) erwarten würde.');
+  if (years.length > 1) {
+    const seg = html('div', 'seg');
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'Heizjahr');
+    for (const y of years) {
+      const b = html('button', '', yearLabel(y));
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(y === y0));
+      b.addEventListener('click', () => {
+        shownYear = y;
+        monthsCard(node, months, model, season);
+      });
+      seg.append(b);
+    }
+    node.append(seg);
+  }
   const H = 214;
   const L = 6;
   const R = 6;
   const T = 26;
   const B = 34;
-  const yMax = Math.max(1, ...list.map(m => Math.max(m.kWh, m.kWhNormal))) * 1.06;
-  const slot = (W - L - R) / list.length;
+  const top = Math.max(1, ...slots.map(x => (x.m ? Math.max(x.m.kWh, x.m.kWhNormal) : x.open || 0)));
+  const yMax = top * 1.06;
+  const slot = (W - L - R) / 12;
   const y = v => H - B - (v / yMax) * (H - B - T);
   const cx = i => L + slot * (i + 0.5);
   const expected = m => (model && typeof m.hgtNormal === 'number' ? m.kWhNormal + model.aKWh * (m.hgt - m.hgtNormal) : null);
-  const { wrap, root } = chart(H, `Monate: Verbrauch gegen Normalwetter, ${list.length} Monate`);
+  const { wrap, root } = chart(H, `Heizjahr ${yearLabel(y0)}: Verbrauch gegen Normalwetter`);
   const hid = uid();
   const gid = uid();
   root.append(
@@ -164,23 +201,24 @@ function monthsCard(node, months, model) {
     root.append(svg('text', { x: W - R, y: y(v) - 4, class: 'axis', 'text-anchor': 'end' }, `${fmt(v)} kWh`));
   }
   root.append(svg('line', { x1: L, x2: W - R, y1: y(0), y2: y(0), class: 'grid' }));
-  list.forEach((m, i) => {
-    const mo = Number(m.month.slice(5, 7));
-    // Jahreszahl unter dem ersten Monat und unter jedem Januar
-    if (i === 0 || mo === 1) {
+  slots.forEach((x, i) => {
+    // Jahreszahl unter August und Januar
+    if (i === 0 || x.mo === 1) {
       root.append(svg('line', { x1: L + slot * i + 1, x2: L + slot * i + 1, y1: H - B + 4, y2: H - 2, class: 'year' }));
-      root.append(svg('text', { x: L + slot * i + 4, y: H - 3, class: 'axis' }, m.month.slice(0, 4)));
+      root.append(svg('text', { x: L + slot * i + 4, y: H - 3, class: 'axis' }, x.ym.slice(0, 4)));
     }
-    const hN = y(0) - y(m.kWhNormal);
-    root.append(svg('rect', { x: cx(i) - slot * 0.36, y: y(m.kWhNormal), width: slot * 0.72, height: Math.max(0, hN), fill: `url(#${hid})`, class: 'nbar' }));
-    const hA = y(0) - y(m.kWh);
-    if (hA > 0.5) root.append(svg('rect', { x: cx(i) - slot * 0.19, y: y(m.kWh), width: slot * 0.38, height: hA, rx: 2, fill: `url(#${gid})` }));
-    root.append(svg('text', { x: cx(i), y: H - B + 13, class: m.coverage < 0.999 ? 'axis faint' : 'axis', 'text-anchor': 'middle' }, MONTHS[mo - 1].slice(0, 1)));
+    const normal = x.m ? x.m.kWhNormal : x.open;
+    if (normal !== null && y(0) - y(normal) > 0.5) {
+      root.append(svg('rect', { x: cx(i) - slot * 0.36, y: y(normal), width: slot * 0.72, height: y(0) - y(normal), fill: `url(#${hid})`, class: x.m ? 'nbar' : 'nbar open' }));
+    }
+    if (x.m && y(0) - y(x.m.kWh) > 0.5) root.append(svg('rect', { x: cx(i) - slot * 0.19, y: y(x.m.kWh), width: slot * 0.38, height: y(0) - y(x.m.kWh), rx: 2, fill: `url(#${gid})` }));
+    root.append(svg('text', { x: cx(i), y: H - B + 13, class: x.m && x.m.coverage >= 0.999 ? 'axis' : 'axis faint', 'text-anchor': 'middle' }, MONTHS[x.mo - 1].slice(0, 1)));
   });
-  // Größte Abweichung in einem Heizmonat beschriften
+  // Größte Abweichung in einem vollständigen Heizmonat beschriften
   let big = null;
-  list.forEach((m, i) => {
-    if (m.kWhNormal >= 60 && m.coverage >= 0.9 && (!big || Math.abs(m.kWh - m.kWhNormal) > Math.abs(big.m.kWh - big.m.kWhNormal))) big = { m, i };
+  slots.forEach((x, i) => {
+    const m = x.m;
+    if (m && m.kWhNormal >= 60 && m.coverage >= 0.9 && (!big || Math.abs(m.kWh - m.kWhNormal) > Math.abs(big.m.kWh - big.m.kWhNormal))) big = { m, i };
   });
   if (big) {
     const d = big.m.kWh / big.m.kWhNormal - 1;
@@ -188,15 +226,17 @@ function monthsCard(node, months, model) {
     root.append(svg('text', { x: lx, y: Math.min(y(big.m.kWh), y(big.m.kWhNormal)) - 6, class: d < 0 ? 'lbl-good' : 'lbl-bad', 'text-anchor': 'middle' }, `${d < 0 ? '▼' : '▲'} ${pct(d)}`));
   }
   attachTip(wrap, root, W, H, px => {
-    const i = Math.min(list.length - 1, Math.max(0, Math.floor((px - L) / slot)));
-    const m = list[i];
+    const i = Math.min(11, Math.max(0, Math.floor((px - L) / slot)));
+    const { ym, m, open } = slots[i];
+    if (!m && open === null) return null;
+    const topY = m ? Math.min(y(m.kWh), y(m.kWhNormal)) : y(open);
+    const hit = { x: cx(i), y: topY, box: { x: cx(i) - slot * 0.46, y: topY - 3, w: slot * 0.92, h: y(0) - topY + 3 } };
+    if (!m) return { ...hit, lines: [formatMonth(ym), `noch offen · normal ≈ ${fmt(open)} kWh`] };
     const d = m.kWh / Math.max(1e-9, m.kWhNormal) - 1;
     const e = expected(m);
     const weather = typeof m.hgtNormal === 'number' && m.hgtNormal > 5 ? m.hgt / m.hgtNormal - 1 : null;
     return {
-      x: cx(i),
-      y: Math.min(y(m.kWh), y(m.kWhNormal)),
-      box: { x: cx(i) - slot * 0.46, y: Math.min(y(m.kWh), y(m.kWhNormal)) - 3, w: slot * 0.92, h: y(0) - Math.min(y(m.kWh), y(m.kWhNormal)) + 3 },
+      ...hit,
       lines: [
         `${formatMonth(m.month)}${m.coverage < 0.999 ? ' (unvollständig)' : ''}`,
         `${fmt(m.kWh)} kWh · normal ${fmt(m.kWhNormal)} kWh`,
@@ -206,21 +246,25 @@ function monthsCard(node, months, model) {
       ],
     };
   });
-  node.append(wrap, legend([['sw-gas', 'Verbrauch'], ['sw-normal', 'bei Normalwetter']]));
-  const sumK = list.reduce((s, m) => s + m.kWh, 0);
-  const sumN = list.reduce((s, m) => s + m.kWhNormal, 0);
-  const d = sumK / Math.max(1e-9, sumN) - 1;
-  const hgt = list.reduce((s, m) => s + m.hgt, 0);
-  const hgtN = list.reduce((s, m) => s + (m.hgtNormal || 0), 0);
-  const w = hgtN > 0 ? hgt / hgtN - 1 : 0;
-  node.append(
-    rich('insight', [
-      `In ${list.length} Monaten: `, [`${fmt(sumK)} kWh`], ' – ',
-      Math.abs(d) < 0.02 ? 'etwa so viel wie bei Normalwetter.' : `${d < 0 ? '▼' : '▲'} ${pct(d)} ${d < 0 ? 'weniger' : 'mehr'} als bei Normalwetter.`,
-      Math.abs(w) >= 0.02 ? ` Das Wetter war ${pct(w)} ${w > 0 ? 'kälter' : 'milder'} als normal.` : '',
-    ]),
-    html('p', 'foot', 'Antippen zeigt, ob es am Wetter lag oder an dir („bei diesem Wetter erwartet“).')
-  );
+  node.append(wrap, legend([['sw-gas', 'Verbrauch'], ['sw-normal', 'bei Normalwetter'], ...(future.size && slots.some(x => x.open !== null) ? [['sw-open', 'noch offen']] : [])]));
+  if (list.length) {
+    const sumK = list.reduce((sum, m) => sum + m.kWh, 0);
+    const sumN = list.reduce((sum, m) => sum + m.kWhNormal, 0);
+    const d = sumK / Math.max(1e-9, sumN) - 1;
+    const hgt = list.reduce((sum, m) => sum + m.hgt, 0);
+    const hgtN = list.reduce((sum, m) => sum + (m.hgtNormal || 0), 0);
+    const w = hgtN > 0 ? hgt / hgtN - 1 : 0;
+    const over = current !== null ? y0 < current : false;
+    const from = list[0].month > `${y0}-08` ? ` (Daten ab ${formatMonth(list[0].month)})` : '';
+    node.append(
+      rich('insight', [
+        `Heizjahr ${yearLabel(y0)}${over ? from : ' bisher'}: `, [`${fmt(sumK)} kWh`], ' – ',
+        Math.abs(d) < 0.02 ? 'etwa so viel wie bei Normalwetter.' : `${d < 0 ? '▼' : '▲'} ${pct(d)} ${d < 0 ? 'weniger' : 'mehr'} als bei Normalwetter.`,
+        Math.abs(w) >= 0.02 ? ` Das Wetter war ${pct(w)} ${w > 0 ? 'kälter' : 'milder'} als normal.` : '',
+      ])
+    );
+  }
+  node.append(html('p', 'foot', 'Antippen zeigt, ob es am Wetter lag oder an dir („bei diesem Wetter erwartet“).'));
   return true;
 }
 

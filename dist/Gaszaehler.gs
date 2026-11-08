@@ -1267,9 +1267,11 @@ function insights_(r, input, nowT) {
   let done = 0;
   let remainingKWh = 0;
   const cum = {}; // normale Heizgradtage bis zum Monatsersten (für die Skala Okt/Jan/Apr)
+  const monthNormal = {}; // normaler Verbrauch je Monat des Heizjahres (auch die noch kommenden)
   for (const iso of isoRange_(start, end)) {
     if (iso.slice(8) === '01') cum[iso.slice(0, 7)] = total;
     const h = normals[iso.slice(5)] || 0;
+    monthNormal[iso.slice(0, 7)] = (monthNormal[iso.slice(0, 7)] || 0) + (m.b + m.a * h) * factor;
     total += h;
     if (iso <= today) done += h;
     else remainingKWh += (m.b + m.a * h) * factor;
@@ -1283,6 +1285,7 @@ function insights_(r, input, nowT) {
     remainingKWh: round_(remainingKWh, 0),
     remainingEur: tariff ? round_((remainingKWh * tariff.ap) / 100, 0) : null,
     marks: Object.keys(cum).map(k => ({ month: k, share: round_(total > 0 ? cum[k] / total : 0, 3) })),
+    months: Object.keys(monthNormal).map(k => ({ month: k, kWhNormal: round_(monthNormal[k], 1) })),
   };
   return out;
 }

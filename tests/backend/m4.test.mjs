@@ -81,6 +81,14 @@ test('Sparrechner und Heizsaison: plausibel und konsistent', () => {
   const jan = season.marks.find(x => x.month === '2027-01').share;
   assert.ok(jan > 0.3 && jan < 0.6, 'bis Neujahr ist etwa ein Drittel bis die Hälfte der Heizgradtage vorbei');
   assert.ok(season.marks.every((x, i, a) => !i || x.share >= a[i - 1].share), 'Skala steigt monoton');
+  // Normaler Verbrauch je Monat des Heizjahres: 12 Monate, Winter > Sommer, Rest ≈ remainingKWh
+  assert.deepEqual(season.months.map(x => x.month).slice(0, 2), ['2026-08', '2026-09']);
+  assert.equal(season.months.length, 12);
+  const n = mo => season.months.find(x => x.month === mo).kWhNormal;
+  assert.ok(n('2027-01') > 5 * n('2026-10'), 'Januar braucht viel mehr als Oktober');
+  const future = season.months.filter(x => x.month >= '2026-12').reduce((sum, x) => sum + x.kWhNormal, 0);
+  const nov = n('2026-11');
+  assert.ok(future < season.remainingKWh && future + nov > season.remainingKWh, 'Dez–Jul + Teil von Nov = was noch kommt');
 });
 
 test('Ohne Modell: nur Tarif, Faktor und Tageswerte', () => {

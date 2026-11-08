@@ -54,6 +54,9 @@ Jahresabrechnung, 7-Tage-Vorhersage in der Prognose, ESP32-Sensor, Erinnerungen.
 | 08.11. | **M4:** Heizsaison = 01.08.–31.07., Fortschritt nach **normalen Heizgradtagen**, nicht nach Kalendertagen | Am 08.11. sind 27 % der Kalendertage, aber nur 6 % des Heizbedarfs vorbei |
 | 08.11. | **M4:** Sparrechner aus dem Modell (1 °C kühler ≈ Heizgrenze 1 K tiefer), Hinweis auf die 6-%-Faustregel | dein Modell ergibt ≈ 16 %, weil du erst unter 12,5 °C heizt (mittlere Differenz an Heiztagen ≈ 6 K statt ≈ 18 K) |
 | 08.11. | **M4:** Tooltips per Antippen, Tippen daneben schließt; Tabellen bleiben als Datenzugang | iPhone kennt kein „Maus weg“; Diagramme sind nur mit Zeiger bedienbar |
+| 08.11. | **M4 (Rückmeldung):** Monate je **Heizjahr Aug–Jul** mit Umschalter; im laufenden Heizjahr die kommenden Monate als „noch offen“ mit Normalwert (`season.months`); Prognose-Grundlage unter die Perioden | Wunsch Nutzer: Geld zuerst; Heizjahr passt zur Heizsaison |
+| 08.11. | Sparrechner bleibt beim Modellwert (≈ 16 %/K) | Altbau-Dachgeschoss: Wärme von unten und Sonne heizen mit → Heizgrenze 12,5 °C → jedes Grad ist ein größerer Teil des Bedarfs |
+| 08.11. | Live-Zähler übernimmt den Schätzwert **nicht** ins Eingabefeld | Wunsch Nutzer: echter Stand wird selbst eingetippt |
 | 08.11. | **Backlog:** PDF-Export | Wunsch Nutzer „für später“ |
 | 08.11. | Optimierungen: nach dem Speichern keine zweite Übersichtsanfrage, beim Speichern bereits gelesene Daten weiterverwenden, `getDataRange` | Kaltstarts von Apps Script kosten bis ~15 s pro Anfrage; Übersichts-Cache erst nach Messung |
 
@@ -199,7 +202,7 @@ CV > 15 % · Grün: sonst. Dazu ein Satz in Klartext.
   und € pro Tag bei der heutigen Temperatur (Arbeitspreis + Grundpreis je Tag).
 - **Heizkurve:** je Ablesezeitraum mittlere Temperatur (`intervals[].tmean`) gegen kWh/Tag; Linie = Modell
   b + a · max(0, θ − t). Punkte im Übergang liegen etwas über der Linie (Mittel über warme und kalte Tage).
-- **Monate gegen Normalwetter:** `months[].kWhNormal` = Σ (b + a · Normal-HGT) × Faktor. Im Tooltip zusätzlich
+- **Monate gegen Normalwetter (je Heizjahr):** `months[].kWhNormal` = Σ (b + a · Normal-HGT) × Faktor; kommende Monate aus `season.months`. Im Tooltip zusätzlich
   „bei diesem Wetter erwartet“ = kWhNormal + a_kWh · (HGT − Normal-HGT) → trennt Wetter von Verhalten.
 - **Kosten pro Tag:** Kurve über −10…20 °C zum aktuellen Tarif. **Sparrechner:** Normal-HGT(θ) − Normal-HGT(θ − 1).
 - **Heizkalender:** die letzten 366 Tage, Wert = kWh des Tages (Teil-Tage hochgerechnet), Glut-Skala mit Wurzel,
