@@ -7,8 +7,12 @@ und am PC im Browser. Kostenlos, kein eigener Server:
 App (GitHub Pages, Ordner docs/)  ──POST──►  Google Apps Script (Web-App)  ──►  Google Sheet „GasWerte“
 ```
 
-**Stand: V1 / Meilenstein M1** – Ablesungen erfassen (auch offline), Zeiträume und Hinweise anzeigen.
-Wetter, Kosten, Modell, Prognose und Diagramme folgen in M2–M4. Plan und Entscheidungen: [KONZEPT.md](KONZEPT.md).
+**Stand: V1 / Meilenstein M2** – Ablesungen erfassen (auch offline), Tagesmitteltemperatur der DWD-Station Mannheim
+(täglich automatisch, Historie ab 2020), Verbrauch nach Heizgradtagen auf Tage verteilt, kWh und Kosten taggenau,
+Abschläge und Saldo je Abrechnungszeitraum, Monatswerte im Vergleich zum Normal.
+Modell, Prognose bis Periodenende (M3) und Diagramme (M4) folgen. Plan und Entscheidungen: [KONZEPT.md](KONZEPT.md).
+
+Wetterdaten: Quelle **Deutscher Wetterdienst** (DWD Opendata, CC BY 4.0).
 
 ---
 
@@ -54,7 +58,10 @@ Nach ein bis zwei Minuten läuft die App unter **https://dyyp.github.io/Gas/**.
 
 - **Ablesungen** nachtragen: direkt im Tab `Ablesungen` (Datum, Stand) oder über die App.
 - **Einstellungen → Mindestdatum** auf das Einzugsdatum setzen.
-- **Tarife, Umrechnung, Abschläge, Perioden** pflegen (werden ab M2 ausgewertet).
+- **Tarife** (Arbeitspreis ct/kWh brutto, Grundpreis €/Monat brutto, je ab Datum), **Abschläge** (Betrag, Fälligkeitstag,
+  ab Datum – eine neue Zeile je Änderung), **Perioden** (Abrechnungszeiträume), **Umrechnung** (Brennwert und Zustandszahl
+  aus der Rechnung; bis dahin gelten die Platzhalter aus den Einstellungen).
+- Die Tabs **Wetter, Tage, Monate, Protokoll** schreibt das Skript selbst (Bearbeiten nur mit Warnung).
 - Spalte **Modell = „ausschließen“**: Der Zeitraum, der mit dieser Ablesung endet, zählt für Verbrauch und Kosten,
   aber nicht fürs Modell (z. B. Aufheizen nach Einzug).
 
@@ -62,14 +69,26 @@ Nach ein bis zwei Minuten läuft die App unter **https://dyyp.github.io/Gas/**.
 
 ## Update des Skripts (bei neuen Versionen)
 
-1. `Code.gs` komplett durch die neue [`dist/Gaszaehler.gs`](dist/Gaszaehler.gs) ersetzen; `appsscript.json` nur, wenn sie sich geändert hat. Speichern.
-2. **`setup`** ausführen (ergänzt neue Tabs/Spalten, ändert keine Daten; bei neuen Berechtigungen fragt Google erneut).
+1. `Code.gs` komplett durch die neue [`dist/Gaszaehler.gs`](dist/Gaszaehler.gs) ersetzen; `appsscript.json` ebenfalls,
+   wenn sie sich geändert hat (**bei M2 ja**: neue Berechtigungen). Speichern.
+2. **`setup`** ausführen (ergänzt neue Tabs/Spalten/Einstellungen, ändert keine Daten). Bei neuen Berechtigungen fragt
+   Google erneut – M2 braucht zusätzlich **„Verbindung zu einem externen Dienst“** (DWD-Wetter) und **„Ausführung, wenn
+   du nicht anwesend bist“** (täglicher Lauf). Beim ersten Mal lädt `setup` die Wetter-Historie (dauert ein paar Sekunden).
 3. **Bereitstellen → Bereitstellungen verwalten** → bestehende Bereitstellung → **Bearbeiten** (Stift) →
    **Version: Neue Version** → **Bereitstellen**. Die URL bleibt gleich.
 
 > Nicht „Neue Bereitstellung“ wählen – das erzeugt eine **neue URL**, und die App spricht weiter mit der alten.
 
 Die App selbst aktualisiert sich automatisch (GitHub Pages); bei offener App erscheint „Neue Version geladen“.
+
+---
+
+## Täglicher Lauf
+
+Jeden Tag zwischen 13 und 14 Uhr holt das Skript die neuen DWD-Werte (der DWD veröffentlicht vormittags) und rechnet
+die Tabs `Tage` und `Monate` neu. Von Hand: Sheet → **Gaszähler → Wetter aktualisieren & neu berechnen**.
+Fällt der DWD länger als drei Tage aus, schickt Google eine Fehler-Mail; Einzelheiten stehen im Tab `Protokoll`.
+Fehlende Tage (z. B. heute) werden vorläufig fortgeschrieben bzw. interpoliert und automatisch ersetzt.
 
 ---
 
@@ -82,13 +101,17 @@ Die App selbst aktualisiert sich automatisch (GitHub Pages); bei offener App ers
 - [ ] Unplausibler Wert (z. B. Komma vergessen) → Rückfrage
 - [ ] Einstellungen → „Verbindung testen“ → „Verbindung ok“
 - [ ] Sheet → Gaszähler → Daten prüfen → keine unerwarteten Auffälligkeiten
+- [ ] Tab `Wetter` gefüllt ab 01.01.2020 bis gestern, `Tage`/`Monate` gefüllt, Protokoll-Eintrag „täglich“
+- [ ] Apps Script → **Trigger** (Wecker-Symbol): genau ein Trigger `taeglich`, täglich 13–14 Uhr
+- [ ] App → Auswertung: Abrechnungszeiträume mit Saldo, Monate mit HGT und Kosten
 
 ---
 
 ## Sicherheit (Kurzfassung)
 
 - Sheet nur für dich freigegeben; Skript im Sheet gebunden (nur du kannst den Code ändern).
-- Berechtigung des Skripts: nur Tabellen (`spreadsheets`).
+- Berechtigungen des Skripts: Tabellen (`spreadsheets`), Abruf externer Daten (`script.external_request`, nur DWD),
+  Trigger (`script.scriptapp`, täglicher Lauf).
 - Die API kann **nur lesen und Ablesungen anhängen** – nichts ändern oder löschen. Korrekturen nur im Sheet.
 - Schlüssel: 122 Zufallsbit, im Anfrage-Body (nicht in der URL). Falsche Versuche landen im Tab `Protokoll`.
 - Schlüssel kompromittiert? Sheet → **Gaszähler → Neuen Schlüssel erzeugen** → auf allen Geräten neu eingeben.
@@ -111,7 +134,7 @@ node tools/render-icons.mjs        # Icons aus tools/assets/icon.svg
 | Ordner | Inhalt |
 |---|---|
 | `docs/` | Web-App (wird von GitHub Pages ausgeliefert) |
-| `apps-script/src/` | Backend-Quellen (Util, Schema, Domain, Store, Overview, Api, Setup) |
+| `apps-script/src/` | Backend-Quellen (Util, Schema, Domain, Calc, Store, Weather, Overview, Api, Job, Setup) |
 | `dist/` | gebündeltes Backend zum Einfügen (generiert, CI prüft Aktualität) |
 | `tests/` | `unit/`, `backend/`, `repo/`, `e2e/`, `fakes/` |
 | `tools/` | Bündeln, lokaler Server, Icons |

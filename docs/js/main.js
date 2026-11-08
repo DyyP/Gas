@@ -6,7 +6,8 @@ import { createApi, NetworkError } from './api.js';
 import { createQueue } from './queue.js';
 import { checkReading, latestKnown } from './plausi.js';
 import { parseReading, localIsoDate, localTime, readingT } from './format.js';
-import { renderLast, renderIntervals, renderHints, renderQueue } from './render.js';
+import { renderLast, renderIntervals, renderHints, renderQueue, renderPeriods, renderMonths } from './render.js';
+import { formatDate } from './format.js';
 
 const $ = id => document.getElementById(id);
 const dom = Object.fromEntries(
@@ -14,7 +15,8 @@ const dom = Object.fromEntries(
     'netBadge', 'updateBanner', 'reloadBtn', 'setupNotice', 'keyForm', 'keyInput', 'keyMsg', 'readingForm', 'date', 'value',
     'saveBtn', 'msg', 'queueCard', 'queueTitle', 'flushBtn', 'queueList', 'lastText', 'lastSub', 'dataAge', 'intervalRows',
     'intervalEmpty', 'hintsCard', 'hintsList', 'keyState', 'serverState', 'testBtn', 'changeKeyBtn', 'testMsg', 'appVersion',
-    'confirmDialog', 'confirmText', 'confirmOk', 'confirmCancel',
+    'confirmDialog', 'confirmText', 'confirmOk', 'confirmCancel', 'periodList', 'periodEmpty', 'monthRows', 'monthEmpty',
+    'weatherState',
   ].map(id => [id, $(id)])
 );
 
@@ -85,6 +87,10 @@ function renderAll() {
   renderLast(dom, overview, newestPending(entries), today());
   renderIntervals(dom.intervalRows, dom.intervalEmpty, overview ? overview.intervals : []);
   renderHints(dom.hintsCard, dom.hintsList, overview ? overview.hints : []);
+  renderPeriods(dom.periodList, dom.periodEmpty, (overview && overview.periods) || []);
+  renderMonths(dom.monthRows, dom.monthEmpty, (overview && overview.months) || []);
+  const w = overview && overview.weather;
+  dom.weatherState.textContent = w && w.last ? `DWD-Station ${w.station}, Werte bis ${formatDate(w.last)} – Quelle: Deutscher Wetterdienst` : 'noch keine Daten';
   const key = getKey();
   dom.keyState.textContent = key ? `gespeichert (…${key.slice(-4)})` : 'fehlt';
   dom.serverState.textContent = API_URL ? `${hostOf(API_URL)}${offline ? ' – nicht erreichbar' : ''}` : 'noch nicht eingetragen';

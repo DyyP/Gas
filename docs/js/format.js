@@ -63,3 +63,13 @@ export function formatDateTime(isoString) {
   if (Number.isNaN(d.getTime())) return '–';
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+const monthFmt = new Intl.DateTimeFormat('de-DE', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+/** „2025-11“ → „Nov. 25“ */
+export function formatMonth(ym) {
+  const d = new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7) - 1, 1));
+  return monthFmt.format(d);
+}
+
+/** Euro mit zwei Nachkommastellen: 154.32 → „154,32 €“ */
+export const formatEuro = x => `${formatNumber(x, 2)} €`;

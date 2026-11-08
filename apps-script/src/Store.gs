@@ -175,3 +175,133 @@ function logEvent_(ss, level, event, details) {
     console.error('Protokoll nicht schreibbar: ' + e);
   }
 }
+
+// ----- ab M2: Wetter, Tarife, Abschläge, Perioden, Ergebnistabellen -----
+
+const WEATHER_CACHE_KEY = 'weather-v1';
+
+/** Wetter als { map: {iso: tm}, last }. Mit kurzem Cache (kompakt kodiert, < 100 KB). */
+function readWeather_(ss, noCache) {
+  const cache = CacheService.getScriptCache();
+  if (!noCache) {
+    const hit = cache.get(WEATHER_CACHE_KEY);
+    if (hit) return decodeWeather_(hit);
+  }
+  const table = readTable_(ss, 'Wetter');
+  const map = {};
+  for (const row of table.rows) {
+    const iso = parseDateValue_(text_(table, row, 'Datum'), isoOfDate_) || parseDateValue_(val_(table, row, 'Datum'), isoOfDate_);
+    const tm = parseNumberDe_(val_(table, row, 'Tm_C'));
+    if (iso && !isNaN(tm)) map[iso] = tm;
+  }
+  const result = { map: map, last: Object.keys(map).sort().pop() || null };
+  try {
+    cache.put(WEATHER_CACHE_KEY, encodeWeather_(map), 21600);
+  } catch (e) {
+    /* zu groß o. Ä. – dann eben ohne Cache */
+  }
+  return result;
+}
+
+/** „JJJJ-MM-TT|v,v,,v“ – eine Zahl je Tag ab Startdatum, leer = fehlt. */
+function encodeWeather_(map) {
+  const keys = Object.keys(map).sort();
+  if (!keys.length) return '|';
+  const vals = isoRange_(keys[0], keys[keys.length - 1]).map(d => (map[d] === undefined ? '' : String(map[d])));
+  return keys[0] + '|' + vals.join(',');
+}
+
+function decodeWeather_(s) {
+  const parts = s.split('|');
+  const map = {};
+  if (!parts[0]) return { map: map, last: null };
+  let n = dayNumber_(parts[0]);
+  for (const v of parts[1].split(',')) {
+    if (v !== '') map[isoFromDayNumber_(n)] = Number(v);
+    n++;
+  }
+  return { map: map, last: Object.keys(map).sort().pop() || null };
+}
+
+function writeWeather_(ss, map, station) {
+  const now = now_();
+  const rows = Object.keys(map)
+    .sort()
+    .map(iso => [berlinMidnight_(iso), map[iso], 'DWD ' + station, now]);
+  writeTable_(ss, 'Wetter', rows);
+  CacheService.getScriptCache().remove(WEATHER_CACHE_KEY);
+}
+
+/** Ersetzt alle Datenzeilen eines System-Tabs (Kopfzeile bleibt). */
+function writeTable_(ss, tabName, rows) {
+  const sheet = ss.getSheetByName(tabName);
+  if (!sheet) throw apiError_('NOT_CONFIGURED', 'Tab „' + tabName + '“ fehlt – „Gaszähler → Einrichten / aktualisieren“ wählen.');
+  const width = sheet.getLastColumn();
+  const old = sheet.getLastRow();
+  if (old > 1) sheet.getRange(2, 1, old - 1, width).clearContent();
+  if (!rows.length) return;
+  const need = rows.length + 1;
+  if (sheet.getMaxRows() < need) sheet.insertRowsAfter(sheet.getMaxRows(), need - sheet.getMaxRows());
+  sheet.getRange(2, 1, rows.length, width).setValues(rows.map(r => r.concat(new Array(Math.max(0, width - r.length)).fill('')).slice(0, width)));
+}
+
+/** Tarife: [{from, ap (ct/kWh), gp (€/Monat)}] nach Datum sortiert. */
+function readTariffs_(ss) {
+  const table = readTable_(ss, 'Tarife');
+  requireCols_(table, 'Tarife', ['Gültig_ab', 'Arbeitspreis_ct_kWh', 'Grundpreis_EUR_Monat']);
+  const rows = [];
+  const hints = [];
+  for (const row of table.rows) {
+    const from = parseDateValue_(val_(table, row, 'Gültig_ab'), isoOfDate_);
+    const ap = parseNumberDe_(val_(table, row, 'Arbeitspreis_ct_kWh'));
+    const gp = parseNumberDe_(val_(table, row, 'Grundpreis_EUR_Monat'));
+    if (!from || !(ap > 0 && ap < 100) || !(gp >= 0 && gp < 200)) {
+      hints.push({ level: 'warn', text: 'Tarife Zeile ' + row.row + ': Datum, Arbeitspreis (ct/kWh) oder Grundpreis (€/Monat) fehlt/unplausibel – Zeile wird ignoriert.' });
+      continue;
+    }
+    rows.push({ from: from, ap: ap, gp: gp, name: text_(table, row, 'Anbieter') });
+  }
+  rows.sort((a, b) => (a.from < b.from ? -1 : 1));
+  return { tariffs: rows, hints: hints };
+}
+
+/** Abschläge: [{from, amount, day}] nach Datum sortiert. */
+function readPaymentRows_(ss) {
+  const table = readTable_(ss, 'Abschläge');
+  requireCols_(table, 'Abschläge', ['Gültig_ab', 'Betrag_EUR']);
+  const rows = [];
+  const hints = [];
+  for (const row of table.rows) {
+    const from = parseDateValue_(val_(table, row, 'Gültig_ab'), isoOfDate_);
+    const amount = parseNumberDe_(val_(table, row, 'Betrag_EUR'));
+    const dayRaw = val_(table, row, 'Fälligkeitstag');
+    const day = dayRaw === '' ? 1 : parseNumberDe_(dayRaw);
+    if (!from || !(amount >= 0 && amount < 10000) || !(day >= 1 && day <= 31)) {
+      hints.push({ level: 'warn', text: 'Abschläge Zeile ' + row.row + ': Datum, Betrag oder Fälligkeitstag (1–31) fehlt/unplausibel – Zeile wird ignoriert.' });
+      continue;
+    }
+    rows.push({ from: from, amount: amount, day: Math.round(day) });
+  }
+  rows.sort((a, b) => (a.from < b.from ? -1 : 1));
+  return { payments: rows, hints: hints };
+}
+
+/** Perioden: [{name, start, end}]. */
+function readPeriods_(ss) {
+  const table = readTable_(ss, 'Perioden');
+  requireCols_(table, 'Perioden', ['Name', 'Start', 'Ende']);
+  const periods = [];
+  const hints = [];
+  for (const row of table.rows) {
+    const name = text_(table, row, 'Name') || 'Periode Zeile ' + row.row;
+    const start = parseDateValue_(val_(table, row, 'Start'), isoOfDate_);
+    const end = parseDateValue_(val_(table, row, 'Ende'), isoOfDate_);
+    if (!start || !end || end < start) {
+      hints.push({ level: 'warn', text: 'Perioden Zeile ' + row.row + ': Start/Ende fehlt oder Ende vor Start – Zeile wird ignoriert.' });
+      continue;
+    }
+    periods.push({ name: name, start: start, end: end });
+  }
+  periods.sort((a, b) => (a.start < b.start ? -1 : 1));
+  return { periods: periods, hints: hints };
+}

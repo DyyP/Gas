@@ -22,10 +22,16 @@ function setup() {
   const newKey = !props.getProperty('KEY');
   if (newKey) props.setProperty('KEY', newKey_());
   props.setProperty('SCHEMA', String(SCHEMA_VERSION));
+  SpreadsheetApp.flush();
 
-  logEvent_(ss, 'INFO', 'setup', report.length ? report.join('; ') : 'alles aktuell');
+  installTriggers_();
+  report.push('Täglicher Lauf eingerichtet (' + DAILY_HOUR + '–' + (DAILY_HOUR + 1) + ' Uhr)');
+  logEvent_(ss, 'INFO', 'setup', report.join('; '));
+  const daily = runDaily_(ss); // Wetter holen (beim ersten Mal inkl. Historie) und rechnen
+
   const lines = ['Einrichtung abgeschlossen (Schema ' + SCHEMA_VERSION + ').'];
-  if (report.length) lines.push(report.join('\n'));
+  lines.push(report.join('\n'));
+  lines.push(daily.text);
   if (newKey) lines.push('Neuer Schlüssel für die App: ' + props.getProperty('KEY'));
   else lines.push('Schlüssel unverändert – anzeigen über „Gaszähler → Schlüssel anzeigen“.');
   const text = lines.join('\n\n');
@@ -78,7 +84,8 @@ function ensureSchema_(ss) {
   }
   for (const def of settingDefs_()) {
     if (known[def.key]) continue;
-    settings.appendRow([def.key, def.value, def.text]);
+    const value = def.type === 'date' && def.value ? berlinMidnight_(def.value) : def.value;
+    settings.appendRow([def.key, value, def.text]);
     report.push('Einstellung „' + def.key + '“ ergänzt');
   }
   return report;
@@ -103,6 +110,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Gaszähler')
     .addItem('Daten prüfen', 'menuCheck')
+    .addItem('Wetter aktualisieren & neu berechnen', 'menuDaily')
     .addItem('Schlüssel anzeigen', 'menuShowKey')
     .addSeparator()
     .addItem('Einrichten / aktualisieren', 'setup')

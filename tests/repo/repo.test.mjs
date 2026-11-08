@@ -37,7 +37,11 @@ test('appsscript.json: Zeitzone, V8, minimale Berechtigungen, Web-App-Zugriff', 
   const m = JSON.parse(read('apps-script/appsscript.json'));
   assert.equal(m.timeZone, 'Europe/Berlin');
   assert.equal(m.runtimeVersion, 'V8');
-  assert.deepEqual(m.oauthScopes, ['https://www.googleapis.com/auth/spreadsheets']);
+  assert.deepEqual(m.oauthScopes, [
+    'https://www.googleapis.com/auth/spreadsheets', // Sheet lesen/schreiben
+    'https://www.googleapis.com/auth/script.external_request', // DWD-Wetter abrufen
+    'https://www.googleapis.com/auth/script.scriptapp', // täglicher Trigger
+  ]);
   assert.deepEqual(m.webapp, { executeAs: 'USER_DEPLOYING', access: 'ANYONE_ANONYMOUS' });
 });
 

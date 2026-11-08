@@ -98,10 +98,12 @@ export class FakeSheet {
   getRange(row, col, nr = 1, nc = 1) {
     if (typeof row !== 'number') throw new Error('Fake: nur numerische getRange');
     if (row < 1 || col < 1 || nr < 1 || nc < 1) throw new Error(`Fake: ungültiger Bereich ${row},${col},${nr},${nc}`);
+    if (row + nr - 1 > this.getMaxRows()) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
     return new FakeRange(this, row, col, nr, nc);
   }
   appendRow(values) { const r = this.getLastRow() + 1; values.forEach((v, i) => this.set(r, i + 1, v)); return this; }
   deleteRows(start, n) { this.data.splice(start - 1, n); }
+  insertRowsAfter(after, n) { this.maxRows = this.getMaxRows() + n; return this; }
   setFrozenRows(n) { this.frozenRows = n; }
   protect() {
     const p = { description: '', warningOnly: false };
@@ -136,6 +138,7 @@ class FakeRange {
     return this;
   }
   setValue(v) { this.sheet.set(this.row, this.col, v); return this; }
+  clearContent() { this.cells((R, C) => { if (this.sheet.data[R - 1] && C - 1 < this.sheet.data[R - 1].length) this.sheet.data[R - 1][C - 1] = ''; }); return this; }
   setNumberFormat(f) { this.cells((R, C) => this.sheet.formats.set(`${R},${C}`, f)); return this; }
   setDataValidation(v) { this.cells((R, C) => this.sheet.validations.set(`${R},${C}`, v)); return this; }
   setFontWeight() { return this; }
@@ -182,16 +185,48 @@ export class FakeSpreadsheet {
  * Lädt das gebündelte Backend in eine isolierte Umgebung.
  * Optionen: now (ISO-String), ss (FakeSpreadsheet), active (true: getActiveSpreadsheet liefert ss), props
  */
-export function loadBackend({ now = '2026-11-08T10:00:00Z', ss = new FakeSpreadsheet(), active = true, props = {} } = {}) {
+export function loadBackend({ now = '2026-11-08T10:00:00Z', ss = new FakeSpreadsheet(), active = true, props = {}, http = {} } = {}) {
   const logs = [];
   const errors = [];
   const store = { ...props };
   const cache = new Map();
-  const state = { lockFree: true, ui: null, nowMs: Date.parse(now) };
+  const state = { lockFree: true, ui: null, nowMs: Date.parse(now), http, fetched: [], triggers: [], sleeps: [] };
+  const response = (code, body) => ({
+    getResponseCode: () => code,
+    getContentText: () => (typeof body === 'string' ? body : ''),
+    getBlob: () => ({ entries: Array.isArray(body) ? body : [] }),
+  });
   const ctx = {
     console: { log: m => logs.push(String(m)), error: m => errors.push(String(m)), warn: m => logs.push(String(m)) },
     Logger: { log: m => logs.push(String(m)) },
-    Utilities: { formatDate, parseDate, getUuid: () => crypto.randomUUID() },
+    Utilities: {
+      formatDate, parseDate, getUuid: () => crypto.randomUUID(),
+      sleep: ms => state.sleeps.push(ms),
+      unzip: blob => blob.entries.map(e => ({ getName: () => e.name, getDataAsString: () => e.text })),
+    },
+    UrlFetchApp: {
+      fetch: (url, opts) => {
+        state.fetched.push(url);
+        const h = state.http[url];
+        if (h === undefined) return response(404, 'not found');
+        const r = typeof h === 'function' ? h() : h;
+        if (r instanceof Error) throw r;
+        if (!opts || !opts.muteHttpExceptions) throw new Error('Fake: bitte muteHttpExceptions setzen');
+        return response(r.code || 200, r.body);
+      },
+    },
+    ScriptApp: {
+      getProjectTriggers: () => state.triggers.slice(),
+      deleteTrigger: t => { state.triggers = state.triggers.filter(x => x !== t); },
+      newTrigger: fn => {
+        const t = { fn, getHandlerFunction: () => fn };
+        const b = {
+          timeBased: () => b, atHour: h => { t.hour = h; return b; }, everyDays: n => { t.everyDays = n; return b; },
+          inTimezone: z => { t.tz = z; return b; }, create: () => { state.triggers.push(t); return t; },
+        };
+        return b;
+      },
+    },
     PropertiesService: {
       getScriptProperties: () => ({
         getProperty: k => (k in store ? store[k] : null),
@@ -208,7 +243,11 @@ export function loadBackend({ now = '2026-11-08T10:00:00Z', ss = new FakeSpreads
       }),
     },
     CacheService: {
-      getScriptCache: () => ({ get: k => (cache.has(k) ? cache.get(k) : null), put: (k, v) => cache.set(k, v) }),
+      getScriptCache: () => ({
+        get: k => (cache.has(k) ? cache.get(k) : null),
+        put: (k, v) => { if (String(v).length > 100 * 1024) throw new Error('Argument too large'); cache.set(k, v); },
+        remove: k => cache.delete(k),
+      }),
     },
     ContentService: {
       MimeType: { JSON: 'JSON' },
@@ -239,7 +278,7 @@ export function loadBackend({ now = '2026-11-08T10:00:00Z', ss = new FakeSpreads
     return JSON.parse(out.getContent());
   };
   return {
-    ctx, ss, store, logs, errors, state, post,
+    ctx, ss, store, logs, errors, state, post, cache,
     setNow: iso => { state.nowMs = Date.parse(iso); },
     sheet: name => ss.getSheetByName(name),
   };

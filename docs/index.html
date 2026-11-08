@@ -75,8 +75,23 @@
     <!-- Auswertung -->
     <section id="view-auswertung" class="view" aria-labelledby="tab-auswertung" hidden>
       <div class="card">
+        <h2>Abrechnungszeiträume</h2>
+        <div id="periodList" class="periods"></div>
+        <p id="periodEmpty" class="muted" hidden>Noch keine Periode – im Sheet im Tab „Perioden“ anlegen.</p>
+      </div>
+      <div class="card">
+        <h2>Monate</h2>
+        <p class="muted small-text">Heizgradtage (HGT) im Vergleich zum Mittel seit 2020. * = Monat nur teilweise abgelesen.</p>
+        <div class="table-wrap">
+          <table id="monthTable">
+            <thead><tr><th scope="col">Monat</th><th scope="col">HGT</th><th scope="col">Normal</th><th scope="col">m³</th><th scope="col">kWh</th><th scope="col">Kosten</th></tr></thead>
+            <tbody id="monthRows"></tbody>
+          </table>
+        </div>
+        <p id="monthEmpty" class="muted" hidden>Noch keine Monatswerte.</p>
+      </div>
+      <div class="card">
         <h2>Zeiträume zwischen Ablesungen</h2>
-        <p class="muted small-text">kWh vorläufig – Prognose, Kosten und Diagramme folgen mit den nächsten Ausbaustufen.</p>
         <div class="table-wrap">
           <table id="intervalTable">
             <thead><tr><th scope="col">Zeitraum</th><th scope="col">Tage</th><th scope="col">m³</th><th scope="col">m³/Tag</th><th scope="col">kWh/Tag</th></tr></thead>
@@ -110,6 +125,7 @@
         <dl class="facts">
           <dt>App-Version</dt><dd id="appVersion">–</dd>
           <dt>Daten</dt><dd>Google Sheet „GasWerte“ – Korrekturen und Stammdaten (Tarife, Abschläge …) dort pflegen.</dd>
+          <dt>Wetter</dt><dd id="weatherState">–</dd>
         </dl>
       </div>
     </section>

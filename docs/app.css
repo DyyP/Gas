@@ -149,3 +149,12 @@ dialog {
 }
 dialog::backdrop { background: rgb(0 0 0 / 0.45); }
 dialog p { margin: 0 0 14px; }
+
+.periods { display: grid; gap: 12px; }
+.period { border-radius: 10px; background: var(--bg); padding: 12px; }
+.period h3 { font-size: 1rem; margin: 0; }
+.period .facts { margin: 8px 0 0; font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+.balance { font-size: 1.35rem; font-weight: 700; margin: 8px 0 2px; font-variant-numeric: tabular-nums; }
+.balance.credit { color: var(--ok); }
+.balance.due { color: var(--warn); }
+.balance-now { font-weight: 600; margin: 8px 0 2px; font-variant-numeric: tabular-nums; }

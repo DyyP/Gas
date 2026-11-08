@@ -45,6 +45,15 @@ function mockServer() {
       settings: { minDate: '2025-11-01', maxPerDay: 20, meter: '' },
       last: last && { date: last.date, time: last.time, value: last.value, meter: '' },
       readingsCount: m.readings.length, intervals,
+      months: [
+        { month: '2025-12', days: 31, hgt: 338.3, hgtNormal: 325.4, m3: 99.183, kWh: 1075.9, cost: 122.15, coverage: 1 },
+        { month: '2026-11', days: 8, hgt: 72.6, hgtNormal: 49.3, m3: 8.105, kWh: 87.9, cost: 16.31, coverage: 0.938 },
+      ],
+      periods: [
+        { name: 'Octopus 2025/26', start: '2025-11-01', end: '2026-10-31', status: 'beendet', complete: true, totalDays: 365, elapsedDays: 365, coveredDays: 365, measuredUntil: '2026-10-31', m3: 429.403, kWh: 4658.2, costWork: 464.88, costBase: 173.88, cost: 638.76, paymentsCount: 12, paymentsPaid: 793.08, paymentsCountTotal: 12, paymentsTotal: 793.08, balance: -154.32, tariffMissing: false },
+        { name: 'MVV 2026/27', start: '2026-11-01', end: '2027-10-31', status: 'läuft', complete: false, totalDays: 365, elapsedDays: 8, coveredDays: 7.5, measuredUntil: '2026-11-07', m3: 8.105, kWh: 87.9, costWork: 12.4, costBase: 3.91, cost: 16.31, paymentsCount: 1, paymentsPaid: 30, paymentsCountTotal: 12, paymentsTotal: 360, balance: -13.69, tariffMissing: false },
+      ],
+      weather: { last: '2026-11-07', station: '05906', source: 'Deutscher Wetterdienst' },
       hints: [{ level: 'info', text: 'kWh mit Platzhalter' }],
     };
   };
@@ -196,12 +205,23 @@ test('Auswertung und Einstellungen', async () => {
   await page.click('#tab-auswertung');
   await page.locator('#intervalRows tr').first().waitFor();
   assert.match(await page.textContent('#intervalRows'), /01\.11\.–03\.11\.2025/);
+  const periods = await page.textContent('#periodList');
+  assert.match(periods, /MVV 2026\/27.*läuft \(Tag 8 von 365\)/s);
+  assert.match(periods, /Guthaben 154,32 €/);
+  assert.match(periods, /Bisher 13,69 € mehr gezahlt als verbraucht/);
+  assert.doesNotMatch(periods, /Guthaben 13,69/);
+  assert.match(periods, /Schätzung der Schlussrechnung/);
+  assert.ok(periods.indexOf('MVV') < periods.indexOf('Octopus'), 'laufende Periode zuerst');
+  const months = await page.textContent('#monthRows');
+  assert.match(months, /Nov\.? 26 \*/);
+  assert.match(months, /122,15 €/);
   assert.equal(await page.isVisible('#hintsCard'), true);
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '4-auswertung.png'), fullPage: true });
   await page.click('#tab-einstellungen');
   await page.click('#testBtn');
   await page.locator('#testMsg', { hasText: 'Verbindung ok – 2 Ablesung(en)' }).waitFor();
   assert.match(await page.textContent('#keyState'), /…ssel/);
+  assert.match(await page.textContent('#weatherState'), /05906.*07\.11\.2026.*Deutscher Wetterdienst/);
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '5-einstellungen.png'), fullPage: true });
   await context.close();
 });

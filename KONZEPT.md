@@ -1,6 +1,6 @@
 # Gaszähler V1 – Konzept
 
-Stand: 08.11.2026 · Status: **freigegeben**, M1 umgesetzt.
+Stand: 08.11.2026 · Status: **freigegeben**, M1 und M2 umgesetzt.
 Lebendes Dokument – Quelle der Wahrheit für Entscheidungen und für spätere Sessions.
 
 ---
@@ -39,6 +39,10 @@ Jahresabrechnung, 7-Tage-Vorhersage in der Prognose, ESP32-Sensor, Erinnerungen.
 | 08.11. | Kein Startwert aus Vertragsprognose nötig | ein volles Jahr eigener Daten liegt vor |
 | 08.11. | Direkt auf `main` pushen | Wunsch Nutzer |
 | 08.11. | Grundpreis in €/Monat erfassen | beide Versorger nennen ihn so |
+| 08.11. | **Wetter ab 2020**, Normalwerte aus 2020 bis Vorjahr | Klimawandel: ältere Jahre verzerren das „Normal“ |
+| 08.11. | **Nur DWD**, kein Open-Meteo | Wunsch Nutzer; Lücken (heute/gestern, Ausfälle) werden fortgeschrieben/interpoliert und automatisch ersetzt – eine Abhängigkeit und das 429-Risiko weniger |
+| 08.11. | Grundpreis je Tag = Monatspreis × 12 / 365 (Einstellung „Grundpreis_Verteilung“) | Abrechnungsweise des Versorgers unbekannt; umschaltbar auf „Kalendermonat“ |
+| 08.11. | Laufende Periode zeigt nur den Zwischenstand (neutral), kein „Guthaben“ | Abschläge werden im Voraus gezahlt – ein Guthaben nach 8 Tagen wäre irreführend |
 
 ---
 
@@ -117,8 +121,13 @@ Platzhalter_Zustandszahl 0,96, Platzhalter_Brennwert_kWh_m3 11,3; weitere ab M2)
     Verzeichnis lesen), Apps Script entpackt mit `Utilities.unzip`, Text ISO-8859-1, `-999` = fehlt.
   - Definition: seit 01.04.2001 Mittel aus mind. 21 Stundenwerten; davor (T7 + T14 + 2·T21)/4 („Mannheimer Stunden“).
     → **Klimajahre ab 2001** (einheitliche Definition).
-- **Heute/Lücken:** Open-Meteo Forecast (`past_days`, Tagesmittel verfügbar), als „vorläufig“ markiert und durch
-  DWD ersetzt, sobald vorhanden. Einzelne Lücken → Interpolation (markiert).
+- **Lücken:** innerhalb ≤ 10 Tage linear interpoliert, am Ende (heute/gestern) ≤ 5 Tage fortgeschrieben; markiert
+  („interpoliert“/„fortgeschrieben“ in `Tage`) und beim nächsten Lauf durch DWD-Werte ersetzt. Ohne Temperatur →
+  Verbrauch des Intervalls gleichmäßig verteilt (Hinweis).
+- **Täglicher Lauf** 13–14 Uhr (DWD veröffentlicht vormittags UTC); Fehler-Mail nur, wenn Wetter > 3 Tage alt.
+- **Erste Auswertung (echte Daten, Platzhalter-Umrechnung):** Octopus 01.11.2025–31.10.2026: 429,4 m³ ≈ 4.658 kWh,
+  Kosten 638,76 € (Arbeit 464,88 + Grund 173,88), Abschläge 12 × 66,09 = 793,08 € → **Guthaben ≈ 154 €** (±14 € je
+  nach echtem Brennwert). Januar 2026 war deutlich kälter als das Mittel 2020–2025 (420 vs. 352 HGT).
 - Modell-HGT: HGT_d = max(0, θ_H − Tm_d). Gradtagzahl VDI 3807 (Anzeige): G_d = 20 − Tm_d für Tm_d < 15 °C.
 - Robustheit: `muteHttpExceptions`, Retry mit Backoff, Fehler → Protokoll, bestehende Daten bleiben.
 
@@ -220,7 +229,7 @@ Grenze der Tests: Die Attrappe bildet Apps Script nach – echtes Verhalten prü
 | | Inhalt | Status |
 |---|---|---|
 | **M1 Fundament** | Repo, CI, Schema/Setup, API, App (Erfassen, Warteschlange, Service Worker), Sicherheit | ✅ umgesetzt, Abnahme durch dich offen |
-| **M2 Wetter & Kosten** | DWD + Ersatzquelle, Historie, Nachtlauf, Tage/Monate, Kosten, Abschläge, Perioden, Hinweise | offen |
+| **M2 Wetter & Kosten** | DWD (Historie ab 2020 + täglich), Tage/Monate, Kosten taggenau, Abschläge, Saldo je Periode, Hinweise | ✅ umgesetzt |
 | **M3 Modell & Prognose** | Modell mit Heizgrenze, Monte Carlo, Ampel, Abschlagsempfehlung, Plausibilität mit Modell | offen |
 | **M4 Dashboard** | Diagramme (SVG), Periodenauswahl, Feinschliff | offen |
 

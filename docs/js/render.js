@@ -1,5 +1,5 @@
 // Darstellung – nur DOM-Methoden und textContent, nie HTML-Strings mit Daten.
-import { formatNumber, formatDate, formatDateShort, daysBetween, relativeDays, formatDateTime } from './format.js';
+import { formatNumber, formatDate, formatDateShort, daysBetween, relativeDays, formatDateTime, formatMonth, formatEuro } from './format.js';
 
 export function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -74,5 +74,75 @@ export function renderQueue(dom, entries, handlers) {
       }
       return el('li', { class: e.state === 'rejected' ? 'error' : e.state === 'confirm' ? 'warn' : '' }, head, detail, actions);
     })
+  );
+}
+
+const STATUS_TEXT = { beendet: 'beendet', läuft: 'läuft', zukünftig: 'beginnt noch' };
+
+/** Abrechnungszeiträume: laufende zuerst, dann die jüngsten beendeten. */
+export function renderPeriods(list, empty, periods) {
+  const order = { läuft: 0, beendet: 1, zukünftig: 2 };
+  const sorted = periods.slice().sort((a, b) => order[a.status] - order[b.status] || (a.start < b.start ? 1 : -1));
+  empty.hidden = sorted.length > 0;
+  list.replaceChildren(
+    ...sorted.map(p => {
+      const head = el(
+        'div',
+        {},
+        el('h3', { text: p.name }),
+        el('p', {
+          class: 'muted small-text',
+          text: `${formatDate(p.start)}–${formatDate(p.end)} · ${STATUS_TEXT[p.status] || p.status}${p.status === 'läuft' ? ` (Tag ${p.elapsedDays} von ${p.totalDays})` : ''}`,
+        })
+      );
+      if (p.status === 'zukünftig') return el('div', { class: 'period' }, head);
+      const credit = p.balance < 0;
+      const amount = formatEuro(Math.abs(p.balance));
+      // Laufende Periode: nur Zwischenstand (Abschläge werden im Voraus gezahlt) – neutral, kein „Guthaben“
+      const balance =
+        p.status === 'läuft'
+          ? el('p', { class: 'balance-now', text: credit ? `Bisher ${amount} mehr gezahlt als verbraucht` : `Bisher ${amount} mehr verbraucht als gezahlt` })
+          : el('p', {
+              class: `balance ${credit ? 'credit' : 'due'}`,
+              text: Math.abs(p.balance) < 0.005 ? 'ausgeglichen' : `${credit ? 'Guthaben' : 'Nachzahlung'} ${amount}`,
+            });
+      const note =
+        p.status === 'beendet'
+          ? p.complete
+            ? 'Schätzung der Schlussrechnung (Stand der eingetragenen Werte).'
+            : 'Unvollständig: Für einen Teil der Periode fehlen Ablesungen.'
+          : `Stand heute – Verbrauch abgelesen bis ${p.measuredUntil ? formatDate(p.measuredUntil) : '–'}. Prognose bis Periodenende folgt.`;
+      const facts = el(
+        'dl',
+        { class: 'facts' },
+        el('dt', { text: 'Verbrauch' }),
+        el('dd', { text: `${formatNumber(p.kWh, 0)} kWh (${formatNumber(p.m3, 1)} m³)` }),
+        el('dt', { text: 'Kosten' }),
+        el('dd', { text: `${formatEuro(p.cost)} (Arbeit ${formatEuro(p.costWork)} + Grund ${formatEuro(p.costBase)})` }),
+        el('dt', { text: 'Abschläge' }),
+        el('dd', { text: `${formatEuro(p.paymentsPaid)} (${p.paymentsCount} von ${p.paymentsCountTotal})` })
+      );
+      return el('div', { class: 'period' }, head, balance, facts, el('p', { class: 'muted small-text', text: note }));
+    })
+  );
+}
+
+/** Monatstabelle, neueste zuerst. */
+export function renderMonths(tbody, empty, months) {
+  const rows = months.slice().reverse();
+  empty.hidden = rows.length > 0;
+  tbody.replaceChildren(
+    ...rows.map(m =>
+      el(
+        'tr',
+        {},
+        el('td', { text: `${formatMonth(m.month)}${m.coverage < 0.999 ? ' *' : ''}` }),
+        el('td', { text: formatNumber(m.hgt, 0) }),
+        el('td', { text: m.hgtNormal === null ? '–' : formatNumber(m.hgtNormal, 0) }),
+        el('td', { text: formatNumber(m.m3, 1) }),
+        el('td', { text: formatNumber(m.kWh, 0) }),
+        el('td', { text: m.cost === null ? '–' : formatEuro(m.cost) })
+      )
+    )
   );
 }

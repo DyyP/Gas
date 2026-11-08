@@ -14,7 +14,7 @@ test('setup: legt Tabs, Spalten, Einstellungen, Schlüssel an – idempotent', (
   const b = loadBackend();
   b.ctx.setup();
   const names = b.ss.getSheets().map(s => s.getName());
-  assert.deepEqual(names, ['Ablesungen', 'Tarife', 'Umrechnung', 'Abschläge', 'Perioden', 'Einstellungen', 'Protokoll']);
+  assert.deepEqual(names, ['Ablesungen', 'Tarife', 'Umrechnung', 'Abschläge', 'Perioden', 'Einstellungen', 'Wetter', 'Tage', 'Monate', 'Protokoll']);
   assert.equal(b.ss.timeZone, 'Europe/Berlin');
   assert.equal(b.ss.locale, 'de_DE');
   assert.match(b.store.KEY, /^[0-9a-f]{32}$/);
@@ -23,7 +23,7 @@ test('setup: legt Tabs, Spalten, Einstellungen, Schlüssel an – idempotent', (
   const settingsRows = b.sheet('Einstellungen').getLastRow();
   b.ctx.setup();
   assert.equal(b.store.KEY, key, 'Schlüssel bleibt beim zweiten Lauf');
-  assert.equal(b.ss.getSheets().length, 7, 'keine doppelten Tabs');
+  assert.equal(b.ss.getSheets().length, 10, 'keine doppelten Tabs');
   assert.equal(b.sheet('Einstellungen').getLastRow(), settingsRows, 'keine doppelten Einstellungen');
   assert.equal(b.sheet('Protokoll').protections[0].warningOnly, true);
   assert.equal(b.sheet('Ablesungen').formats.get('2,2'), '@', 'Uhrzeit als Text');
