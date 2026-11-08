@@ -1,7 +1,7 @@
 // Service Worker – nur für die App-Hülle (damit die App auch ohne Netz öffnet).
 // Strategie: Netz zuerst (mit kurzer Wartezeit, Revalidierung statt HTTP-Cache), sonst Cache.
 // Anfragen an Google (API) fasst er nicht an.
-const VERSION = '1.0.0-m2'; // = APP_VERSION in js/version.js (wird getestet)
+const VERSION = '1.0.1-m2'; // = APP_VERSION in js/version.js (wird getestet)
 const CACHE = `gas-shell-${VERSION}`;
 const SHELL = [
   './',

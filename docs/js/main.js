@@ -30,6 +30,7 @@ let lastSync = 0;
 let syncing = null;
 
 const today = () => localIsoDate();
+const MIN_SCHEMA = 2; // Server-Schema, das diese App-Version erwartet
 
 function hostOf(url) {
   try {
@@ -86,9 +87,15 @@ function renderAll() {
   });
   renderLast(dom, overview, newestPending(entries), today());
   renderIntervals(dom.intervalRows, dom.intervalEmpty, overview ? overview.intervals : []);
-  renderHints(dom.hintsCard, dom.hintsList, overview ? overview.hints : []);
+  // Server-Skript älter als die App (Update im Sheet vergessen oder keine neue Version bereitgestellt)?
+  const serverOld = !!overview && (overview.schema || 0) < MIN_SCHEMA;
+  const oldText = 'Das Skript im Sheet ist noch auf einem älteren Stand. Bitte das Update aus dem README durchführen (Code ersetzen, setup ausführen, neue Version bereitstellen).';
+  const hints = overview ? overview.hints.slice() : [];
+  if (serverOld) hints.unshift({ level: 'warn', text: oldText });
+  renderHints(dom.hintsCard, dom.hintsList, hints);
   renderPeriods(dom.periodList, dom.periodEmpty, (overview && overview.periods) || []);
   renderMonths(dom.monthRows, dom.monthEmpty, (overview && overview.months) || []);
+  if (serverOld) dom.periodEmpty.textContent = dom.monthEmpty.textContent = oldText;
   const w = overview && overview.weather;
   dom.weatherState.textContent = w && w.last ? `DWD-Station ${w.station}, Werte bis ${formatDate(w.last)} – Quelle: Deutscher Wetterdienst` : 'noch keine Daten';
   const key = getKey();

@@ -41,7 +41,7 @@ function mockServer() {
       intervals.unshift({ from: a.date, to: b.date, days, m3, m3PerDay: m3 / days, kWh: m3 * 10.8, kWhPerDay: (m3 * 10.8) / days, meter: '', excluded: false, conversion: 'Platzhalter' });
     }
     return {
-      generatedAt: new Date().toISOString(), today: new Date().toISOString().slice(0, 10), api: 1, schema: 1,
+      generatedAt: new Date().toISOString(), today: new Date().toISOString().slice(0, 10), api: 1, schema: 2,
       settings: { minDate: '2025-11-01', maxPerDay: 20, meter: '' },
       last: last && { date: last.date, time: last.time, value: last.value, meter: '' },
       readingsCount: m.readings.length, intervals,
@@ -223,6 +223,23 @@ test('Auswertung und Einstellungen', async () => {
   assert.match(await page.textContent('#keyState'), /…ssel/);
   assert.match(await page.textContent('#weatherState'), /05906.*07\.11\.2026.*Deutscher Wetterdienst/);
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '5-einstellungen.png'), fullPage: true });
+  await context.close();
+});
+
+test('Altes Server-Skript wird klar gemeldet statt „keine Periode“', async () => {
+  const { context, page, mock } = await openApp();
+  const orig = mock.overview;
+  mock.overview = () => {
+    const o = orig();
+    delete o.periods;
+    delete o.months;
+    o.schema = 1;
+    return o;
+  };
+  await page.reload();
+  await page.click('#tab-auswertung');
+  await page.locator('#periodEmpty', { hasText: 'älteren Stand' }).waitFor();
+  assert.match(await page.textContent('#hintsList'), /Update aus dem README/);
   await context.close();
 });
 
