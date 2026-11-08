@@ -1,35 +1,36 @@
 /**
- * Schema.gs – Aufbau des Sheets (Tabs, Spalten, Formate, Vorgaben). Reine Daten.
+ * Schema.gs – Aufbau des Sheets: Tabs, Spalten, Formate, Typen und Prüfregeln. Reine Daten.
  *
- * Spalten werden über die Überschrift gefunden, nicht über die Position. setup() legt
- * fehlende Tabs und Spalten an und lässt vorhandene Daten unangetastet.
+ * Einzige Stelle, an der Spalten definiert sind: setup() legt sie an, readRows_() liest und prüft sie.
+ * Spalten mit `key` werden gelesen (type: date | number | text | time); `required` fehlt/ungültig → Zeile
+ * wird mit Hinweis ignoriert; optional ungültig → Hinweis, Wert leer. Gefunden wird über die Überschrift.
  */
 
 function schema_() {
   const DATE = 'dd.mm.yyyy';
   const TEXT = '@';
+  const STAMP = 'dd.mm.yyyy hh:mm';
   return [
     {
       name: 'Ablesungen',
       columns: [
-        { name: 'Datum', format: DATE },
-        { name: 'Uhrzeit', format: TEXT },
-        { name: 'Stand_m3', format: '0.000' },
-        { name: 'Zähler', format: TEXT },
-        { name: 'Quelle', format: TEXT, list: ['App', 'Sheet', 'Übergabe', 'Rechnung'] },
-        { name: 'Modell', format: TEXT, list: ['ausschließen'] },
-        { name: 'ID', format: TEXT },
-        { name: 'Erfasst_am', format: 'dd.mm.yyyy hh:mm' },
+        { name: 'Datum', key: 'date', type: 'date', required: true, format: DATE },
+        { name: 'Uhrzeit', key: 'time', type: 'time', format: TEXT },
+        { name: 'Stand_m3', key: 'value', type: 'number', required: true, min: 0, max: 9999999, format: '0.000' },
+        { name: 'Zähler', key: 'meter', type: 'text', format: TEXT },
+        { name: 'Quelle', key: 'source', type: 'text', format: TEXT, list: ['App', 'Sheet', 'Übergabe', 'Rechnung'] },
+        { name: 'Modell', key: 'model', type: 'text', format: TEXT, list: ['ausschließen'] },
+        { name: 'Erfasst_am', format: STAMP },
         { name: 'Notiz', format: TEXT },
       ],
     },
     {
       name: 'Tarife',
       columns: [
-        { name: 'Gültig_ab', format: DATE },
-        { name: 'Arbeitspreis_ct_kWh', format: '0.00' },
-        { name: 'Grundpreis_EUR_Monat', format: '0.00' },
-        { name: 'Anbieter', format: TEXT },
+        { name: 'Gültig_ab', key: 'from', type: 'date', required: true, format: DATE },
+        { name: 'Arbeitspreis_ct_kWh', key: 'ap', type: 'number', required: true, min: 0.01, max: 100, format: '0.00' },
+        { name: 'Grundpreis_EUR_Monat', key: 'gp', type: 'number', required: true, min: 0, max: 200, format: '0.00' },
+        { name: 'Anbieter', key: 'name', type: 'text', format: TEXT },
         { name: 'Tarif', format: TEXT },
         { name: 'Notiz', format: TEXT },
       ],
@@ -37,36 +38,36 @@ function schema_() {
     {
       name: 'Umrechnung',
       columns: [
-        { name: 'Gültig_ab', format: DATE },
-        { name: 'Brennwert_kWh_m3', format: '0.000' },
-        { name: 'Zustandszahl', format: '0.0000' },
-        { name: 'Status', format: TEXT, list: ['Schätzung', 'Rechnung'] },
+        { name: 'Gültig_ab', key: 'from', type: 'date', required: true, format: DATE },
+        { name: 'Brennwert_kWh_m3', key: 'hs', type: 'number', required: true, min: 8, max: 13, format: '0.000' },
+        { name: 'Zustandszahl', key: 'z', type: 'number', required: true, min: 0.8, max: 1.1, format: '0.0000' },
+        { name: 'Status', key: 'status', type: 'text', format: TEXT, list: ['Schätzung', 'Rechnung'] },
         { name: 'Notiz', format: TEXT },
       ],
     },
     {
       name: 'Abschläge',
       columns: [
-        { name: 'Gültig_ab', format: DATE },
-        { name: 'Betrag_EUR', format: '0.00' },
-        { name: 'Fälligkeitstag', format: '0' },
+        { name: 'Gültig_ab', key: 'from', type: 'date', required: true, format: DATE },
+        { name: 'Betrag_EUR', key: 'amount', type: 'number', required: true, min: 0, max: 9999, format: '0.00' },
+        { name: 'Fälligkeitstag', key: 'day', type: 'number', min: 1, max: 31, format: '0' },
         { name: 'Notiz', format: TEXT },
       ],
     },
     {
       name: 'Perioden',
       columns: [
-        { name: 'Name', format: TEXT },
-        { name: 'Start', format: DATE },
-        { name: 'Ende', format: DATE },
+        { name: 'Name', key: 'name', type: 'text', format: TEXT },
+        { name: 'Start', key: 'start', type: 'date', required: true, format: DATE },
+        { name: 'Ende', key: 'end', type: 'date', required: true, format: DATE },
         { name: 'Notiz', format: TEXT },
       ],
     },
     {
       name: 'Einstellungen',
       columns: [
-        { name: 'Schlüssel', format: TEXT },
-        { name: 'Wert' },
+        { name: 'Schlüssel', key: 'key', type: 'text', required: true, format: TEXT },
+        { name: 'Wert', key: 'value' }, // Typ je Einstellung, siehe settingDefs_()
         { name: 'Beschreibung', format: TEXT },
       ],
     },
@@ -74,10 +75,10 @@ function schema_() {
       name: 'Wetter',
       system: true,
       columns: [
-        { name: 'Datum', format: 'yyyy-mm-dd' },
-        { name: 'Tm_C', format: '0.0' },
+        { name: 'Datum', key: 'date', type: 'date', required: true, format: 'yyyy-mm-dd' },
+        { name: 'Tm_C', key: 'tm', type: 'number', required: true, min: -50, max: 50, format: '0.0' },
         { name: 'Quelle', format: TEXT },
-        { name: 'Abgerufen_am', format: 'dd.mm.yyyy hh:mm' },
+        { name: 'Abgerufen_am', format: STAMP },
       ],
     },
     {
@@ -126,10 +127,7 @@ function schema_() {
   ];
 }
 
-/**
- * Einstellungen mit Typ und Vorgabe. Fehlende Schlüssel ergänzt setup(); vorhandene Werte
- * bleiben, wie du sie gesetzt hast.
- */
+/** Einstellungen mit Typ und Vorgabe. Fehlende ergänzt setup(); vorhandene Werte bleiben. */
 function settingDefs_() {
   return [
     { key: 'Mindestdatum', type: 'date', value: '', text: 'Frühestes erlaubtes Ablesedatum (z. B. Einzug), leer = keine Grenze' },

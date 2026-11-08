@@ -26,7 +26,8 @@ Wetterdaten: Quelle **Deutscher Wetterdienst** (DWD Opendata, CC BY 4.0).
    - Datei `appsscript.json` öffnen, Inhalt komplett ersetzen durch [`apps-script/appsscript.json`](apps-script/appsscript.json).
    - Datei `Code.gs` öffnen, Inhalt komplett ersetzen durch [`dist/Gaszaehler.gs`](dist/Gaszaehler.gs).
    - Speichern (Strg+S).
-4. Oben die Funktion **`setup`** auswählen → **Ausführen**.
+4. Oben die Funktion **`setup`** auswählen → **Ausführen**. (Ergebnis steht im Ausführungsprotokoll. Über das Menü
+   im Sheet – **Gaszähler → Einrichten / aktualisieren** – kommt es stattdessen als Meldung.)
    Google fragt nach Berechtigungen: **Berechtigungen prüfen** → dein Konto → bei „Google hat diese App nicht überprüft“
    auf **Erweitert → Zu „…“ wechseln** → **Zulassen**. (Normal bei eigenen Skripten; das Skript bekommt nur Zugriff auf
    Tabellen.)
@@ -56,7 +57,9 @@ Nach ein bis zwei Minuten läuft die App unter **https://dyyp.github.io/Gas/**.
 
 ### 5. Daten im Sheet
 
-- **Ablesungen** nachtragen: direkt im Tab `Ablesungen` (Datum, Stand) oder über die App.
+- **Ablesungen** nachtragen: direkt im Tab `Ablesungen` (Datum, Stand) oder über die App. Ein Stand pro Tag;
+  derselbe Wert noch einmal gesendet wird ignoriert. (Eine Spalte „ID“ aus älteren Versionen wird nicht mehr
+  gebraucht und kann gelöscht werden.)
 - **Einstellungen → Mindestdatum** auf das Einzugsdatum setzen.
 - **Tarife** (Arbeitspreis ct/kWh brutto, Grundpreis €/Monat brutto, je ab Datum), **Abschläge** (Betrag, Fälligkeitstag,
   ab Datum – eine neue Zeile je Änderung), **Perioden** (Abrechnungszeiträume), **Umrechnung** (Brennwert und Zustandszahl
@@ -113,7 +116,7 @@ Fehlende Tage (z. B. heute) werden vorläufig fortgeschrieben bzw. interpoliert 
 - Berechtigungen des Skripts: Tabellen (`spreadsheets`), Abruf externer Daten (`script.external_request`, nur DWD),
   Trigger (`script.scriptapp`, täglicher Lauf).
 - Die API kann **nur lesen und Ablesungen anhängen** – nichts ändern oder löschen. Korrekturen nur im Sheet.
-- Schlüssel: 122 Zufallsbit, im Anfrage-Body (nicht in der URL). Falsche Versuche landen im Tab `Protokoll`.
+- Schlüssel: 122 Zufallsbit, im Anfrage-Body (nicht in der URL), Vergleich in konstanter Zeit.
 - Schlüssel kompromittiert? Sheet → **Gaszähler → Neuen Schlüssel erzeugen** → auf allen Geräten neu eingeben.
 - Bitte Zwei-Faktor-Anmeldung bei Google **und** GitHub aktivieren.
 

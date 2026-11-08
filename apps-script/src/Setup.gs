@@ -5,8 +5,17 @@
  * Einstellungen an, ändert aber keine vorhandenen Daten.
  */
 
-/** Einmalig (und nach jedem Update) im Skript-Editor ausführen. */
+/** Einmalig (und nach jedem Update) im Skript-Editor ausführen – Ergebnis steht im Ausführungsprotokoll. */
 function setup() {
+  Logger.log(runSetup_());
+}
+
+/** Dasselbe über das Menü im Sheet – mit Meldung (im Editor würde die Meldung unsichtbar im Sheet warten). */
+function menuSetup() {
+  showAlert_('Gaszähler', runSetup_());
+}
+
+function runSetup_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) {
     throw new Error('Kein Sheet gefunden: Das Skript muss aus dem Sheet heraus angelegt sein (Erweiterungen → Apps Script).');
@@ -34,9 +43,7 @@ function setup() {
   lines.push(daily.text);
   if (newKey) lines.push('Neuer Schlüssel für die App: ' + props.getProperty('KEY'));
   else lines.push('Schlüssel unverändert – anzeigen über „Gaszähler → Schlüssel anzeigen“.');
-  const text = lines.join('\n\n');
-  Logger.log(text);
-  showAlert_('Gaszähler', text);
+  return lines.join('\n\n');
 }
 
 /** Legt fehlende Tabs/Spalten/Einstellungen an. Rückgabe: Liste der Änderungen. */
@@ -113,7 +120,7 @@ function onOpen() {
     .addItem('Wetter aktualisieren & neu berechnen', 'menuDaily')
     .addItem('Schlüssel anzeigen', 'menuShowKey')
     .addSeparator()
-    .addItem('Einrichten / aktualisieren', 'setup')
+    .addItem('Einrichten / aktualisieren', 'menuSetup')
     .addItem('Neuen Schlüssel erzeugen …', 'menuRotateKey')
     .addToUi();
 }

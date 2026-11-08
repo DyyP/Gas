@@ -97,19 +97,11 @@ function parseNumberDe_(v) {
   return Number(s);
 }
 
-/** Datum aus Sheet-Zelle oder Text (TT.MM.JJJJ, T.M.JJJJ, JJJJ-MM-TT) → ISO oder null. */
-function parseDateValue_(v, formatDateFn) {
-  if (isDate_(v)) return formatDateFn(v);
-  if (typeof v !== 'string') return null;
-  const s = v.trim();
-  let m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(s);
-  if (m) {
-    const iso = m[3] + '-' + pad2_(Number(m[2])) + '-' + pad2_(Number(m[1]));
-    return isIsoDate_(iso) ? iso : null;
-  }
-  m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (m) return isIsoDate_(s) ? s : null;
-  return null;
+/** Datum als Text (TT.MM.JJJJ, T.M.JJJJ, JJJJ-MM-TT) → ISO oder null. */
+function parseDateText_(s) {
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(s);
+  const iso = m ? m[3] + '-' + pad2_(Number(m[2])) + '-' + pad2_(Number(m[1])) : s;
+  return isIsoDate_(iso) ? iso : null;
 }
 
 function pad2_(n) {

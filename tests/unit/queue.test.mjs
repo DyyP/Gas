@@ -21,8 +21,10 @@ function fakeApi() {
       if (key !== 'k') throw new ApiError('AUTH', 'Falscher Schlüssel');
       if (r.value < 0) throw new ApiError('VALIDATION', 'Ungültiger Zählerstand');
       if (r.value > 10000 && !r.confirmed) throw new ApiError('PLAUSIBILITY', 'Stimmt der Wert?');
-      const dup = saved.has(r.id);
-      saved.set(r.id, r);
+      const k = `${r.date}|${r.value}`; // wie der Server: gleicher Tag + Wert = Duplikat
+      assert.equal(r.id, undefined, 'ID wird nicht gesendet');
+      const dup = saved.has(k);
+      saved.set(k, r);
       return { saved: dup ? 'duplicate' : 'new', overview: { readingsCount: saved.size } };
     },
   };
@@ -106,7 +108,7 @@ test('Rückfrage: confirm sendet mit confirmed=true', async () => {
   q.confirm('id-00000001');
   const res2 = await q.flush();
   assert.equal(res2.sent.length, 1);
-  assert.equal(saved.get('id-00000001').confirmed, true);
+  assert.equal(saved.get('2026-11-01|23000').confirmed, true);
 });
 
 test('falscher oder fehlender Schlüssel: nichts wird verworfen', async () => {

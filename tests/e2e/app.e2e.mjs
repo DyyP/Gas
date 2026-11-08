@@ -63,7 +63,7 @@ function mockServer() {
     if (body.key !== KEY) return { ok: false, v: 1, error: { code: 'AUTH', message: 'Falscher Schlüssel' } };
     if (body.action === 'overview') return { ok: true, v: 1, data: { overview: m.overview() } };
     const r = body.reading;
-    if (m.readings.some(x => x.id === r.id)) return { ok: true, v: 1, data: { saved: 'duplicate', overview: m.overview() } };
+    if (m.readings.some(x => x.date === r.date && x.value === r.value)) return { ok: true, v: 1, data: { saved: 'duplicate', overview: m.overview() } };
     const last = m.readings.at(-1);
     if (last && !r.confirmed && r.value - last.value > 1000) {
       return { ok: false, v: 1, error: { code: 'PLAUSIBILITY', message: 'Server: ungewöhnlich viel – stimmt der Wert?' } };
@@ -119,7 +119,8 @@ test('Online speichern: Komma-Eingabe, Uhrzeit heute, Anzeige aktualisiert', asy
   const add = mock.calls.find(c => c.action === 'addReading');
   assert.equal(add.reading.value, 2309.5);
   assert.match(add.reading.time, /^\d{2}:\d{2}$/);
-  assert.match(add.reading.id, /^[0-9a-f-]{36}$/);
+  assert.equal(add.reading.id, undefined, 'keine ID an den Server');
+  assert.equal(mock.calls.filter(c => c.action === 'overview').length, 1, 'nach dem Speichern keine zweite Übersichtsanfrage');
   assert.equal(add.v, 1);
   assert.match(await page.textContent('#lastText'), /2\.309,500 m³/);
   assert.equal(await page.inputValue('#value'), '');

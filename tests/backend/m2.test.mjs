@@ -51,18 +51,19 @@ test('fillTemps_: interpoliert Lücken, schreibt das Ende fort (max. 5 Tage)', (
 test('distributeReadings_: Summe exakt, kalte Tage bekommen mehr, Sommer gleichmäßig, Uhrzeit anteilig', () => {
   const r = (date, value, minutes = null) => ({ date, value, minutes, t: ctx.readingT_(date, minutes), meter: '' });
   const temps = ctx.fillTemps_({ '2026-01-01': 0, '2026-01-02': 10, '2026-01-03': 5, '2026-07-01': 20, '2026-07-02': 22, '2026-07-03': 25 }, '2026-01-01', '2026-07-03');
-  const d = ctx.distributeReadings_([r('2026-01-01', 100), r('2026-01-03', 110)], temps, 15);
+  const pairs = list => ctx.readingPairs_(list).pairs;
+  const d = ctx.distributeReadings_(pairs([r('2026-01-01', 100), r('2026-01-03', 110)]), temps, 15);
   near(d.m3['2026-01-01'] + d.m3['2026-01-02'] + d.m3['2026-01-03'], 10);
   // Gewichte: 0,5·15 : 1·5 : 0,5·10 → 7,5 : 5 : 5
   near(d.m3['2026-01-01'], 10 * 7.5 / 17.5);
   near(d.m3['2026-01-02'], 10 * 5 / 17.5);
   assert.equal(d.covered['2026-01-01'], 0.5);
   assert.equal(d.covered['2026-01-02'], 1);
-  const s = ctx.distributeReadings_([r('2026-07-01', 200, 0), r('2026-07-03', 201, 0)], temps, 15);
+  const s = ctx.distributeReadings_(pairs([r('2026-07-01', 200, 0), r('2026-07-03', 201, 0)]), temps, 15);
   near(s.m3['2026-07-01'], 0.5);
   near(s.m3['2026-07-02'], 0.5);
   assert.equal(s.m3['2026-07-03'], undefined);
-  const miss = ctx.distributeReadings_([r('2026-03-01', 1), r('2026-03-03', 3)], {}, 15);
+  const miss = ctx.distributeReadings_(pairs([r('2026-03-01', 1), r('2026-03-03', 3)]), {}, 15);
   near(miss.m3['2026-03-02'], 1);
   assert.match(miss.hints[0].text, /1 Zeitraum\/Zeiträume ohne vollständige Temperatur \(01\.03\.2026–03\.03\.2026\)/);
   assert.equal(miss.hints.length, 1);
@@ -99,8 +100,10 @@ test('computeAll_: Tarifwechsel mitten im Ableseintervall, Perioden-Saldo, Monat
   const weather = {};
   for (const d of ctx.isoRange_('2025-10-20', '2026-11-10')) weather[d] = 5; // jeder Tag HGT 10
   const r = (date, value) => ({ date, value, minutes: null, t: ctx.readingT_(date, null), meter: '' });
+  const readings = [r('2026-10-30', 1000), r('2026-11-03', 1040)]; // 4 Tage, 10 m³/Tag
   const res = ctx.computeAll_({
-    readings: [r('2026-10-30', 1000), r('2026-11-03', 1040)], // 4 Tage, 10 m³/Tag
+    readings,
+    pairs: ctx.readingPairs_(readings).pairs,
     weather,
     conversions: [],
     placeholder: { z: 1, hs: 10 },
@@ -140,8 +143,10 @@ test('computeAll_: ohne Tarif keine Kosten (statt falscher Null) und Hinweis', (
   const weather = {};
   for (const d of ctx.isoRange_('2026-01-01', '2026-02-28')) weather[d] = 0;
   const r = (date, value) => ({ date, value, minutes: null, t: ctx.readingT_(date, null), meter: '' });
+  const readings = [r('2026-01-01', 0), r('2026-02-28', 100)];
   const res = ctx.computeAll_({
-    readings: [r('2026-01-01', 0), r('2026-02-28', 100)],
+    readings,
+    pairs: ctx.readingPairs_(readings).pairs,
     weather, conversions: [], placeholder: { z: 1, hs: 10 },
     tariffs: [{ from: '2026-02-01', ap: 10, gp: 10 }], payments: [],
     periods: [{ name: 'P', start: '2026-01-01', end: '2026-12-31' }],
@@ -150,18 +155,9 @@ test('computeAll_: ohne Tarif keine Kosten (statt falscher Null) und Hinweis', (
   });
   assert.equal(res.months[0].cost, null);
   assert.notEqual(res.months[1].cost, null);
-  assert.equal(res.periods[0].tariffMissing, true);
   const text = res.hints.map(h => h.text).join('\n');
   assert.match(text, /fehlt ein Tarif/);
   assert.match(text, /keine Abschläge/);
-});
-
-test('Wetter-Cache: kompakt kodiert, Lücken bleiben Lücken, bleibt < 100 KB bis 2040', () => {
-  const map = { '2026-01-01': -1.5, '2026-01-03': 2 };
-  assert.deepEqual(plain(ctx.decodeWeather_(ctx.encodeWeather_(map))), { map, last: '2026-01-03' });
-  const big = {};
-  for (const d of ctx.isoRange_('2020-01-01', '2040-12-31')) big[d] = -12.3;
-  assert.ok(ctx.encodeWeather_(big).length < 100 * 1024);
 });
 
 test('setup: holt DWD-Historie ab 2020 + laufende Daten, legt Trigger einmal an, schreibt Tage/Monate', () => {
@@ -236,4 +232,42 @@ test('Übersicht mit deinen Startdaten: Perioden, Abschläge, Saldo, Monate, Wet
   b.ctx.runDaily_(b.ss);
   assert.ok(b.sheet('Tage').getLastRow() > 370);
   assert.ok(b.sheet('Monate').rows().some(r => r[0] === '2026-01'));
+});
+
+test('setup aus dem Editor öffnet keinen Dialog (würde bis zum Zeitlimit warten), Menü schon', () => {
+  const b = loadBackend({ http: dwdHttp() });
+  const alerts = [];
+  b.state.ui = { alert: (...a) => alerts.push(a), ButtonSet: { OK: 'OK' } };
+  b.ctx.setup();
+  assert.equal(alerts.length, 0);
+  assert.match(b.logs.join('\n'), /Einrichtung abgeschlossen/);
+  b.ctx.menuSetup();
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0][1], /Einrichtung abgeschlossen/);
+});
+
+test('Tab-Leser: optionales Feld ungültig → Hinweis, Zeile bleibt; Pflichtfeld ungültig → Zeile weg', () => {
+  const b = loadBackend({ http: dwdHttp() });
+  b.ctx.setup();
+  const D = iso => b.ctx.berlinMidnight_(iso);
+  b.sheet('Abschläge').appendRow([D('2025-11-01'), 66.09, 40]);
+  b.sheet('Abschläge').appendRow([D('2026-01-01'), 'viel', 1]);
+  const res = b.ctx.readSorted_(b.ss, 'Abschläge');
+  assert.equal(res.rows.length, 1);
+  assert.equal(res.rows[0].day, null);
+  const text = res.hints.map(h => h.text).join('\n');
+  assert.match(text, /Abschläge Zeile 2: Fälligkeitstag ungültig \(erlaubt 1–31\) – wird ignoriert/);
+  assert.match(text, /Abschläge Zeile 3: Betrag_EUR ungültig .* Zeile wird ignoriert/);
+});
+
+test('Kein Abschlags-Hinweis für Perioden, die noch nicht begonnen haben', () => {
+  const readings = [0, 1].map(i => ({ date: `2026-01-0${i + 1}`, value: i, minutes: null, t: ctx.readingT_(`2026-01-0${i + 1}`, null), meter: '' }));
+  const res = ctx.computeAll_({
+    readings, pairs: ctx.readingPairs_(readings).pairs, weather: {}, conversions: [], placeholder: { z: 1, hs: 10 },
+    tariffs: [], payments: [], periods: [{ name: 'Später', start: '2027-01-01', end: '2027-12-31' }],
+    settings: { Heizgrenze_C: 15, Raumtemperatur_C: 20, Grundpreis_Verteilung: 'Jahr', Wetter_ab: '2026-01-01' },
+    today: '2026-01-02',
+  });
+  assert.equal(res.periods[0].status, 'zukünftig');
+  assert.doesNotMatch(res.hints.map(h => h.text).join('\n'), /keine Abschläge/);
 });

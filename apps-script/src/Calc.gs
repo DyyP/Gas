@@ -61,53 +61,41 @@ function degreeDays_(tm, heizgrenze, raum) {
 }
 
 /**
- * Verteilt den Verbrauch jedes Ableseintervalls nach HGT auf die Tage (ohne Wärmebedarf oder ohne
- * Temperatur gleichmäßig). Rückgabe { m3: {iso: m³}, covered: {iso: Anteil 0–1}, hints }.
+ * Verteilt den Verbrauch jedes Ablesepaars nach HGT auf die Tage (ohne Wärmebedarf oder ohne Temperatur
+ * gleichmäßig). Rückgabe { m3: {iso: m³}, covered: {iso: Anteil 0–1}, hints }.
  */
-function distributeReadings_(readings, temps, heizgrenze) {
+function distributeReadings_(pairs, temps, heizgrenze) {
   const m3 = {};
   const covered = {};
-  const hints = [];
-  const missingIntervals = [];
-  for (let i = 1; i < readings.length; i++) {
-    const a = readings[i - 1];
-    const b = readings[i];
-    if (a.meter !== b.meter) continue;
-    const dv = b.value - a.value;
-    if (dv < 0) continue; // wird in buildIntervals_ gemeldet
+  const missing = [];
+  for (const p of pairs) {
     const parts = [];
     let sumW = 0;
-    let missing = false;
-    for (let d = Math.floor(a.t); d < b.t; d++) {
-      const f = Math.min(b.t, d + 1) - Math.max(a.t, d);
+    let gap = false;
+    for (let d = Math.floor(p.a.t); d < p.b.t; d++) {
+      const f = Math.min(p.b.t, d + 1) - Math.max(p.a.t, d);
       if (f <= 1e-9) continue;
       const iso = isoFromDayNumber_(d);
       const tm = temps[iso] ? temps[iso].tm : null;
-      if (tm === null) missing = true;
+      if (tm === null) gap = true;
       const w = tm === null ? 0 : f * Math.max(0, heizgrenze - tm);
       parts.push({ iso: iso, f: f, w: w });
       sumW += w;
     }
-    const uniform = missing || sumW <= 1e-9;
-    if (missing) missingIntervals.push(deDate_(a.date) + '–' + deDate_(b.date));
-    const total = uniform ? b.t - a.t : sumW;
-    for (const p of parts) {
-      m3[p.iso] = (m3[p.iso] || 0) + (dv * (uniform ? p.f : p.w)) / total;
-      covered[p.iso] = (covered[p.iso] || 0) + p.f;
+    if (gap) missing.push(deDate_(p.a.date) + '–' + deDate_(p.b.date));
+    const uniform = gap || sumW <= 1e-9;
+    const total = uniform ? p.b.t - p.a.t : sumW;
+    for (const x of parts) {
+      m3[x.iso] = (m3[x.iso] || 0) + (p.dv * (uniform ? x.f : x.w)) / total;
+      covered[x.iso] = (covered[x.iso] || 0) + x.f;
     }
   }
-  if (missingIntervals.length) {
-    const list = missingIntervals.length <= 3 ? ' (' + missingIntervals.join(', ') + ')' : '';
-    hints.push({ level: 'warn', text: missingIntervals.length + ' Zeitraum/Zeiträume ohne vollständige Temperatur' + list + ' – Verbrauch dort gleichmäßig verteilt.' });
+  const hints = [];
+  if (missing.length) {
+    const list = missing.length <= 3 ? ' (' + missing.join(', ') + ')' : '';
+    hints.push({ level: 'warn', text: missing.length + ' Zeitraum/Zeiträume ohne vollständige Temperatur' + list + ' – Verbrauch dort gleichmäßig verteilt.' });
   }
   return { m3: m3, covered: covered, hints: hints };
-}
-
-/** Letzte Zeile mit from ≤ iso (Liste nach from sortiert) oder null. */
-function validAt_(rows, iso) {
-  let hit = null;
-  for (const r of rows) if (r.from <= iso) hit = r;
-  return hit;
 }
 
 /** Grundpreis pro Tag aus Monatspreis: „Jahr“ = × 12 / 365, „Kalendermonat“ = / Tage des Monats. */
@@ -128,7 +116,7 @@ function paymentSchedule_(rows, fromIso, toIso) {
     let y = Number(r.from.slice(0, 4));
     let m = Number(r.from.slice(5, 7));
     for (let guard = 0; guard < 1200; guard++) {
-      const day = Math.min(Math.max(1, r.day || 1), daysInMonth_(y, m));
+      const day = Math.min(Math.max(1, Math.round(r.day || 1)), daysInMonth_(y, m));
       const iso = y + '-' + pad2_(m) + '-' + pad2_(day);
       if (iso >= until || iso > toIso) break;
       if (iso >= r.from && iso >= fromIso && r.amount) out.push({ date: iso, amount: r.amount });
@@ -162,7 +150,7 @@ function dailyNormals_(weather, fromYear, toYear, heizgrenze) {
 }
 
 /**
- * Gesamtrechnung. in: { readings (bereinigt, sortiert), weather {iso: tm}, conversions, placeholder,
+ * Gesamtrechnung. in: { readings (bereinigt, sortiert), pairs (readingPairs_), weather {iso: tm}, conversions, placeholder,
  * tariffs [{from, ap, gp}], payments [{from, amount, day}], periods [{name, start, end}], settings, today }
  * Rückgabe { days, months, periods, hints, weatherLast }.
  */
@@ -181,7 +169,7 @@ function computeAll_(input) {
   const from = periodStart < first ? periodStart : first;
   const to = input.today;
   const temps = fillTemps_(input.weather, from, to);
-  const dist = distributeReadings_(readings, temps, heizgrenze);
+  const dist = distributeReadings_(input.pairs, temps, heizgrenze);
   hints.push.apply(hints, dist.hints);
 
   const lastFullYear = Number(to.slice(0, 4)) - 1;
@@ -192,7 +180,7 @@ function computeAll_(input) {
     const t = temps[iso];
     const dd = degreeDays_(t.tm, heizgrenze, raum);
     const m3 = dist.m3[iso] === undefined ? null : dist.m3[iso];
-    const conv = conversionAt_(input.conversions, iso, input.placeholder);
+    const conv = factorAt_(input.conversions, iso, input.placeholder);
     const kWh = m3 === null ? null : m3 * conv.factor;
     const tariff = validAt_(input.tariffs, iso);
     const costWork = kWh === null || !tariff ? null : (kWh * tariff.ap) / 100;
@@ -291,7 +279,7 @@ function summarizePeriod_(p, days, paymentRows, today, hints) {
   if (ended && !complete) {
     hints.push({ level: 'warn', text: 'Periode „' + p.name + '“: ' + round_(uncovered, 1) + ' Tag(e) ohne Ablesung – Verbrauch dort fehlt in der Summe.' });
   }
-  if (!all.length) hints.push({ level: 'info', text: 'Periode „' + p.name + '“: keine Abschläge eingetragen (Tab „Abschläge“).' });
+  if (!all.length && p.start <= today) hints.push({ level: 'info', text: 'Periode „' + p.name + '“: keine Abschläge eingetragen (Tab „Abschläge“).' });
   const cost = costWork + costBase;
   return {
     name: p.name,
@@ -301,7 +289,6 @@ function summarizePeriod_(p, days, paymentRows, today, hints) {
     complete: complete,
     totalDays: totalDays,
     elapsedDays: elapsedDays,
-    coveredDays: round_(covered, 2),
     measuredUntil: measuredUntil,
     m3: round_(m3, 3),
     kWh: round_(kWh, 1),
@@ -311,8 +298,6 @@ function summarizePeriod_(p, days, paymentRows, today, hints) {
     paymentsCount: due.length,
     paymentsPaid: round_(paid, 2),
     paymentsCountTotal: all.length,
-    paymentsTotal: round_(all.reduce((s, x) => s + x.amount, 0), 2),
     balance: round_(cost - paid, 2), // > 0 Nachzahlung, < 0 Guthaben (Stand heute)
-    tariffMissing: tariffMissing,
   };
 }

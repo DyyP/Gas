@@ -29,20 +29,20 @@ function runDaily_(ss) {
       parts.push('Wetter-Fehler: ' + e.message);
       logEvent_(ss, 'WARN', 'wetter', e.message);
     }
-    parts.push(writeResultTables_(ss));
+    const tables = writeResultTables_(ss);
+    parts.push(tables.text);
     const text = parts.join(' · ');
     logEvent_(ss, weatherError ? 'WARN' : 'INFO', 'täglich', text);
     // Nur melden, wenn die Daten wirklich veralten (ein Ausfall des DWD für einen Tag ist kein Problem).
-    const last = readWeather_(ss, true).last;
-    const today = Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd');
-    const stale = !last || dayNumber_(today) - dayNumber_(last) > 3;
+    const last = tables.weatherLast;
+    const stale = !last || dayNumber_(tables.today) - dayNumber_(last) > 3;
     return { text: text, fatal: weatherError && stale ? weatherError : null };
   } finally {
     lock.releaseLock();
   }
 }
 
-/** Schreibt „Tage“ und „Monate“ neu. Rückgabe: Bericht. */
+/** Schreibt „Tage“ und „Monate“ neu. Rückgabe { text, weatherLast, today }. */
 function writeResultTables_(ss) {
   const c = computeFromSheet_(ss);
   const v = x => (x === null || x === undefined ? '' : x);
@@ -64,7 +64,7 @@ function writeResultTables_(ss) {
   writeTable_(ss, 'Tage', dayRows);
   const monthRows = c.result.months.map(m => [m.month, m.days, m.hgt, v(m.hgtNormal), m.m3, m.kWh, v(m.cost), m.coverage]);
   writeTable_(ss, 'Monate', monthRows);
-  return 'Tage: ' + dayRows.length + ', Monate: ' + monthRows.length;
+  return { text: 'Tage: ' + dayRows.length + ', Monate: ' + monthRows.length, weatherLast: c.weatherLast, today: c.today };
 }
 
 /** Legt den täglichen Trigger genau einmal an (alte Trigger dieser Funktion werden ersetzt). */

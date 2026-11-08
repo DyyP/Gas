@@ -101,6 +101,8 @@ export class FakeSheet {
     if (row + nr - 1 > this.getMaxRows()) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
     return new FakeRange(this, row, col, nr, nc);
   }
+  /** Wie im Original: A1 bis letzte Zeile/Spalte mit Inhalt, mindestens 1×1. */
+  getDataRange() { return this.getRange(1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); }
   appendRow(values) { const r = this.getLastRow() + 1; values.forEach((v, i) => this.set(r, i + 1, v)); return this; }
   deleteRows(start, n) { this.data.splice(start - 1, n); }
   insertRowsAfter(after, n) { this.maxRows = this.getMaxRows() + n; return this; }

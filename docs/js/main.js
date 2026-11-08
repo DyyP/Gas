@@ -5,9 +5,8 @@ import { createStorage } from './storage.js';
 import { createApi, NetworkError } from './api.js';
 import { createQueue } from './queue.js';
 import { checkReading, latestKnown } from './plausi.js';
-import { parseReading, localIsoDate, localTime, readingT } from './format.js';
+import { parseReading, localIsoDate, localTime, readingT, formatDate } from './format.js';
 import { renderLast, renderIntervals, renderHints, renderQueue, renderPeriods, renderMonths } from './render.js';
-import { formatDate } from './format.js';
 
 const $ = id => document.getElementById(id);
 const dom = Object.fromEntries(
@@ -31,6 +30,7 @@ let syncing = null;
 
 const today = () => localIsoDate();
 const MIN_SCHEMA = 2; // Server-Schema, das diese App-Version erwartet
+const AUTH_TEXT = 'Der Schlüssel ist falsch oder wurde geändert.';
 
 function hostOf(url) {
   try {
@@ -68,9 +68,9 @@ function updateDateInput() {
   }
 }
 
+/** Neuester noch nicht gesendeter Stand, mit Kennzeichen, ob er neuer als der Server-Stand ist. */
 function newestPending(entries) {
-  let best = null;
-  for (const e of entries) if (e.state !== 'rejected' && (!best || readingT(e.date, e.time) > readingT(best.date, best.time))) best = e;
+  const best = latestKnown(null, entries);
   if (!best) return null;
   const last = overview && overview.last;
   return { ...best, newer: !last || readingT(best.date, best.time) > readingT(last.date, last.time) };
@@ -110,7 +110,11 @@ function showKeyForm(message) {
   if (location.hash && location.hash !== '#erfassen') location.hash = '#erfassen';
 }
 
-/** Warteschlange senden, dann Übersicht laden. Gleichzeitige Aufrufe teilen sich einen Lauf. */
+/**
+ * Warteschlange senden; die Übersicht nur nachladen, wenn das Senden keine mitgebracht hat (spart eine
+ * Anfrage – bei Kaltstart von Apps Script bis zu ~15 s). Fehler landen einheitlich in res.error.
+ * Gleichzeitige Aufrufe teilen sich einen Lauf.
+ */
 function sync() {
   if (!API_URL || !getKey()) {
     renderAll();
@@ -121,19 +125,15 @@ function sync() {
     lastSync = Date.now();
     const res = await queue.flush();
     if (res.overview) setOverview(res.overview);
-    if (res.stoppedBy === 'auth') showKeyForm('Der Schlüssel ist falsch oder wurde geändert.');
-    if (res.stoppedBy === 'network') setOffline(true);
-    if (!res.stoppedBy) {
+    if (!res.stoppedBy && !res.overview) {
       try {
-        const data = await api.overview(getKey());
-        setOverview(data.overview);
-        setOffline(false);
+        setOverview((await api.overview(getKey())).overview);
       } catch (err) {
-        if (err.code === 'AUTH') showKeyForm('Der Schlüssel ist falsch oder wurde geändert.');
-        else if (err instanceof NetworkError) setOffline(true);
         res.error = err;
       }
     }
+    if (res.error && res.error.code === 'AUTH') showKeyForm(AUTH_TEXT);
+    setOffline(res.error instanceof NetworkError);
     return res;
   })().finally(() => {
     syncing = null;
@@ -225,10 +225,9 @@ dom.keyForm.addEventListener('submit', async e => {
   dom.keyInput.value = '';
   dom.keyForm.hidden = true;
   setMsg(dom.msg, 'Verbinde …');
-  const res = await sync();
-  if (res && !res.error && !res.stoppedBy) setMsg(dom.msg, 'Verbunden ✓', 'ok');
-  else if (res && res.error && res.error.code !== 'AUTH') setMsg(dom.msg, res.error.message, 'error');
-  else setMsg(dom.msg, '');
+  const err = (await sync() || {}).error;
+  if (!err) setMsg(dom.msg, 'Verbunden ✓', 'ok');
+  else setMsg(dom.msg, err.code === 'AUTH' ? '' : err.message, 'error');
 });
 
 dom.flushBtn.addEventListener('click', () => sync());
@@ -239,27 +238,11 @@ dom.testBtn.addEventListener('click', async () => {
   if (!API_URL) return setMsg(dom.testMsg, 'Keine API-URL eingetragen (docs/config.js).', 'error');
   if (!getKey()) return setMsg(dom.testMsg, 'Kein Schlüssel gespeichert.', 'error');
   setMsg(dom.testMsg, 'Teste …');
-  try {
-    const data = await api.overview(getKey());
-    setOverview(data.overview);
-    setOffline(false);
-    setMsg(dom.testMsg, `Verbindung ok – ${data.overview.readingsCount} Ablesung(en) im Sheet.`, 'ok');
-  } catch (err) {
-    if (err instanceof NetworkError) {
-      setOffline(true);
-      setMsg(
-        dom.testMsg,
-        navigator.onLine === false
-          ? 'Kein Internet.'
-          : `${err.message}. Prüfe: Web-App-URL in config.js, Bereitstellung mit Zugriff „Jeder“, Internetverbindung.`,
-        'error'
-      );
-    } else {
-      if (err.code === 'AUTH') showKeyForm('Der Schlüssel ist falsch oder wurde geändert.');
-      setMsg(dom.testMsg, err.message, 'error');
-    }
-  }
-  renderAll();
+  const err = (await sync() || {}).error;
+  if (!err) return setMsg(dom.testMsg, `Verbindung ok – ${overview.readingsCount} Ablesung(en) im Sheet.`, 'ok');
+  if (navigator.onLine === false) return setMsg(dom.testMsg, 'Kein Internet.', 'error');
+  const check = err instanceof NetworkError ? '. Prüfe: Web-App-URL in config.js, Bereitstellung mit Zugriff „Jeder“, Internetverbindung.' : '';
+  setMsg(dom.testMsg, err.message + check, 'error');
 });
 
 // Ansichten über den Hash (#erfassen, #auswertung, #einstellungen)

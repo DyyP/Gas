@@ -64,13 +64,11 @@ test('Anfrage-Prüfung: kaputt, zu groß, falsche Version, nicht eingerichtet', 
   assert.equal(fresh.post({ v: 1, key: 'x', action: 'overview' }).error.code, 'NOT_CONFIGURED');
 });
 
-test('Schlüssel: falsch → AUTH und Protokoll, richtig → Übersicht', () => {
+test('Schlüssel: falsch → AUTH, richtig → Übersicht', () => {
   const b = ready();
   const bad = b.post({ v: 1, key: 'falsch', action: 'overview' });
   assert.deepEqual(bad, { ok: false, v: 1, error: { code: 'AUTH', message: 'Falscher Schlüssel' } });
   assert.equal(b.post({ v: 1, action: 'overview' }).error.code, 'AUTH');
-  const log = b.sheet('Protokoll').rows().map(r => r[2]);
-  assert.ok(log.includes('auth'));
   const ok = b.post({ v: 1, key: b.key, action: 'overview' });
   assert.equal(ok.ok, true);
   assert.equal(ok.data.overview.readingsCount, 0);
@@ -83,7 +81,7 @@ test('Unbekannte Aktion', () => {
   assert.equal(b.post({ v: 1, key: b.key, action: 'deleteAll' }).error.code, 'BAD_REQUEST');
 });
 
-test('addReading: speichert als echtes Datum + Text-Uhrzeit, Duplikat per ID und per Wert', () => {
+test('addReading: speichert als echtes Datum + Text-Uhrzeit, gleicher Tag + Wert = Duplikat', () => {
   const b = ready();
   const r1 = b.post({ v: 1, key: b.key, action: 'addReading', reading: reading() });
   assert.equal(r1.ok, true);
@@ -105,7 +103,7 @@ test('addReading: speichert als echtes Datum + Text-Uhrzeit, Duplikat per ID und
   assert.equal(s.rows().length, 1);
 });
 
-test('addReading: Konflikt am selben Tag, gleiche ID mit anderem Wert', () => {
+test('addReading: anderer Wert am selben Tag = Konflikt', () => {
   const b = ready();
   b.post({ v: 1, key: b.key, action: 'addReading', reading: reading() });
   const c1 = b.post({ v: 1, key: b.key, action: 'addReading', reading: reading({ id: 'a1b2c3d4-0000-4000-8000-000000000009', value: 2311 }) });
@@ -115,7 +113,7 @@ test('addReading: Konflikt am selben Tag, gleiche ID mit anderem Wert', () => {
   assert.equal(c2.error.code, 'CONFLICT');
 });
 
-test('addReading: Validierung (Datum, Zukunft, Mindestdatum, Wert, Uhrzeit, ID, Zähler)', () => {
+test('addReading: Validierung (Datum, Zukunft, Mindestdatum, Wert, Uhrzeit)', () => {
   const b = ready();
   const send = over => b.post({ v: 1, key: b.key, action: 'addReading', reading: reading(over) });
   assert.equal(send({ date: '2026-02-30' }).error.code, 'VALIDATION');
@@ -125,8 +123,9 @@ test('addReading: Validierung (Datum, Zukunft, Mindestdatum, Wert, Uhrzeit, ID, 
   assert.equal(send({ value: '2310' }).error.code, 'VALIDATION');
   assert.equal(send({ value: 1e7 }).error.code, 'VALIDATION');
   assert.equal(send({ time: '25:00' }).error.code, 'VALIDATION');
-  assert.equal(send({ id: 'x' }).error.code, 'BAD_REQUEST');
-  assert.equal(send({ meter: '=IMPORTXML()' }).error.code, 'BAD_REQUEST');
+  assert.equal(send({ meter: '=IMPORTXML()' }).ok, true, 'Zähler aus der Anfrage wird ignoriert');
+  assert.equal(b.sheet('Ablesungen').rows()[0][3], '', 'Zähler kommt aus den Einstellungen');
+  b.sheet('Ablesungen').data.length = 1;
   assert.equal(b.post({ v: 1, key: b.key, action: 'addReading' }).error.code, 'BAD_REQUEST');
   // Mindestdatum aus den Einstellungen
   const st = b.sheet('Einstellungen');
@@ -204,7 +203,7 @@ test('Übersicht: Intervalle (gebrochene Tage, neueste zuerst), Hinweise, Platzh
   assert.equal(o.intervals[0].to, '2025-11-12');
   const texts = o.hints.map(h => h.text).join('\n');
   assert.match(texts, /zwei Stände am 09\.11\.2025/);
-  assert.match(texts, /Zeile 6: Stand fehlt/);
+  assert.match(texts, /Ablesungen Zeile 6: Stand_m3 ungültig/);
   assert.match(texts, /Platzhalter/);
 
   // Umrechnung eintragen → Faktor aus Tabelle

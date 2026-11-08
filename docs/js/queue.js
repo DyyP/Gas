@@ -1,6 +1,6 @@
 // Offline-Warteschlange: Jede Ablesung wird ZUERST lokal gespeichert und dann gesendet.
 // Geht das Senden schief (kein Netz, Zeitüberschreitung), bleibt sie liegen und wird später erneut
-// gesendet – sicher, weil der Server dieselbe ID (oder gleichen Tag + Wert) nur einmal speichert.
+// gesendet – sicher, weil der Server gleichen Tag + Wert nur einmal speichert.
 //
 // Zustände: pending (wartet) · confirm (Server fragt nach) · rejected (abgelehnt, mit Grund)
 import { isRetryable } from './api.js';
@@ -37,10 +37,8 @@ export function createQueue({ storage, api, getKey, onChange = () => {}, now = (
         break;
       }
       try {
-        const data = await api.addReading(
-          { id: next.id, date: next.date, time: next.time, value: next.value, confirmed: next.confirmed === true },
-          key
-        );
+        // Die ID bleibt lokal (Schlüssel der Warteschlange); der Server erkennt Wiederholungen an Tag + Wert.
+        const data = await api.addReading({ date: next.date, time: next.time, value: next.value, confirmed: next.confirmed === true }, key);
         drop(next.id);
         result.sent.push({ id: next.id, saved: data.saved });
         result.overview = data.overview;

@@ -89,7 +89,7 @@ function fetchDwdHistorical_(station, fromIso) {
 function updateWeather_(ss, settings) {
   const station = dwdStation_(settings.DWD_Station);
   const from = settings.Wetter_ab || '2020-01-01';
-  const known = readWeather_(ss, true).map;
+  const known = readWeather_(ss).map;
   const merged = {};
   Object.keys(known).forEach(d => (merged[d] = known[d]));
   const notes = [];

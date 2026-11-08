@@ -43,6 +43,8 @@ Jahresabrechnung, 7-Tage-Vorhersage in der Prognose, ESP32-Sensor, Erinnerungen.
 | 08.11. | **Nur DWD**, kein Open-Meteo | Wunsch Nutzer; Lücken (heute/gestern, Ausfälle) werden fortgeschrieben/interpoliert und automatisch ersetzt – eine Abhängigkeit und das 429-Risiko weniger |
 | 08.11. | Grundpreis je Tag = Monatspreis × 12 / 365 (Einstellung „Grundpreis_Verteilung“) | Abrechnungsweise des Versorgers unbekannt; umschaltbar auf „Kalendermonat“ |
 | 08.11. | Laufende Periode zeigt nur den Zwischenstand (neutral), kein „Guthaben“ | Abschläge werden im Voraus gezahlt – ein Guthaben nach 8 Tagen wäre irreführend |
+| 08.11. | **Aufräumen nach Review:** ein schemagesteuerter Tab-Leser (`readRows_`), eine Paar-Funktion für Ablesezeiträume, keine Ablese-ID (Duplikat = gleicher Tag + Wert), kein Wetter-Cache und keine Fehlversuchs-Zählung (ohne messbaren Nutzen), `setup` aus dem Editor ohne Dialog | weniger Doppelungen, eine Stelle pro Regel; Backend −11 % Code |
+| 08.11. | Optimierungen: nach dem Speichern keine zweite Übersichtsanfrage, beim Speichern bereits gelesene Daten weiterverwenden, `getDataRange` | Kaltstarts von Apps Script kosten bis ~15 s pro Anfrage; Übersichts-Cache erst nach Messung |
 
 ---
 
@@ -76,17 +78,19 @@ Jahresabrechnung, 7-Tage-Vorhersage in der Prognose, ESP32-Sensor, Erinnerungen.
 | Eingaben | Body ≤ 4 KB, strikte Typ-/Bereichsprüfung, Zählernummer mit engem Zeichensatz, Texte nie als Formel (`safeText_`). |
 | App | CSP per `<meta>` (nur eigene Skripte/Styles, Verbindungen nur zu `script.google.com` + `script.googleusercontent.com`), kein `innerHTML`, `credentials: 'omit'`, `referrer: no-referrer`, localStorage-Präfix `gas.`. |
 | Konten | Zwei-Faktor-Anmeldung bei Google und GitHub. |
-| Notfall | Menü „Neuen Schlüssel erzeugen“; falsche Schlüssel werden stündlich gezählt und protokolliert. |
+| Notfall | Menü „Neuen Schlüssel erzeugen“. |
 
 ---
 
 ## 4. Datenmodell (Google Sheet „GasWerte“)
 
-Spalten werden über die Überschrift gefunden. `setup()` legt fehlende Tabs/Spalten/Einstellungen an, ändert keine
-Daten und keine Formate vorhandener Spalten. Sheet-Zeitzone Europe/Berlin, Gebietsschema de_DE.
+Alles in `Schema.gs` (Spalten, Formate, Typ, Pflicht, Wertebereich) – `setup()` legt daraus an, `readRows_()` liest und
+prüft daraus. Spalten werden über die Überschrift gefunden; fehlende Pflichtwerte → Zeile mit Hinweis ignoriert,
+ungültige optionale Werte → Hinweis, Feld leer. `setup()` ändert keine Daten und keine Formate vorhandener Spalten.
+Sheet-Zeitzone Europe/Berlin, Gebietsschema de_DE.
 
 **Ablesungen** – Datum · Uhrzeit (Text HH:MM, leer = 12:00) · Stand_m3 · Zähler · Quelle (App/Sheet/Übergabe/Rechnung) ·
-Modell („ausschließen“) · ID (UUID der App) · Erfasst_am · Notiz
+Modell („ausschließen“) · Erfasst_am · Notiz
 **Tarife** – Gültig_ab · Arbeitspreis_ct_kWh (brutto) · Grundpreis_EUR_Monat (brutto) · Anbieter · Tarif · Notiz
 **Umrechnung** – Gültig_ab · Brennwert_kWh_m3 · Zustandszahl · Status (Schätzung/Rechnung) · Notiz
 **Abschläge** – Gültig_ab · Betrag_EUR (0 = ausgesetzt) · Fälligkeitstag · Notiz
@@ -103,7 +107,7 @@ Platzhalter_Zustandszahl 0,96, Platzhalter_Brennwert_kWh_m3 11,3; weitere ab M2)
 - Zeitzone Europe/Berlin überall; Tagesrechnung über UTC-Tagesnummern (sommerzeitfest; Tage zählen 24 h).
 - Ablesezeitpunkt = Datum + Uhrzeit; App speichert die Uhrzeit, wenn das Datum „heute“ ist; sonst 12:00.
   Intervalle sind gebrochene Tage.
-- Ein Stand pro Tag und Zähler. Gleiche ID oder gleicher Tag + Wert → still ignoriert (sicher wiederholbar).
+- Ein Stand pro Tag und Zähler. Gleicher Tag + gleicher Wert → still ignoriert (sicher wiederholbar), anderer Wert → Konflikt.
 - Zählertausch: Zählernummer in allen Zeilen pflegen; Intervalle nie über Zähler hinweg.
 - Preise brutto; gerundet wird nur in der Anzeige.
 - Bekannte künftige Preise mit künftigem Gültig_ab eintragen; sonst gilt der letzte Tarif bis Periodenende.
@@ -187,15 +191,15 @@ nach `dist/Gaszaehler.gs` (eine Datei zum Einfügen; CI prüft Aktualität). Obe
 
 **API v1** – immer POST, Body `text/plain` JSON `{ v: 1, key, action, … }`:
 - `overview` → `{ ok, v, data: { overview } }`
-- `addReading` (`reading: { id, date, time, value, meter?, confirmed? }`) → `{ ok, v, data: { saved: 'new'|'duplicate', overview } }`
+- `addReading` (`reading: { date, time, value, confirmed? }`; Zähler aus den Einstellungen) → `{ ok, v, data: { saved: 'new'|'duplicate', overview } }`
 - Fehler `{ ok: false, v, error: { code, message, details? } }`, Codes: BAD_REQUEST, NOT_CONFIGURED, AUTH,
   VALIDATION, CONFLICT, PLAUSIBILITY, BUSY, SERVER. Die App entscheidet nach `code`.
 - GET → nur Lebenszeichen.
 
 Schreiben unter `LockService` (tryLock 20 s → BUSY), `SpreadsheetApp.flush()` vor Freigabe.
 Menü im Sheet: Daten prüfen · Schlüssel anzeigen · Einrichten/aktualisieren · Neuen Schlüssel erzeugen.
-Ab M2: nächtlicher Trigger (atHour → zufällige Minute in der Stunde), Ergebnis-Cache (CacheService ≤ 100 KB/6 h +
-`_Cache`-Tab, Zellgrenze 50.000 Zeichen), Bearbeitungs-Trigger markiert Cache als veraltet.
+Täglicher Trigger (atHour → zufällige Minute in der Stunde). Kein Ergebnis-Cache: erst einführen, wenn die
+Ausführungsdauer (Apps Script → Ausführungen) es nötig macht.
 
 Quoten (Privatkonto): 6 min/Ausführung, 90 min Trigger/Tag, 20.000 UrlFetch/Tag, 50.000 Properties-Zugriffe/Tag,
 30 gleichzeitige Ausführungen.

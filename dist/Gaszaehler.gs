@@ -103,19 +103,11 @@ function parseNumberDe_(v) {
   return Number(s);
 }
 
-/** Datum aus Sheet-Zelle oder Text (TT.MM.JJJJ, T.M.JJJJ, JJJJ-MM-TT) → ISO oder null. */
-function parseDateValue_(v, formatDateFn) {
-  if (isDate_(v)) return formatDateFn(v);
-  if (typeof v !== 'string') return null;
-  const s = v.trim();
-  let m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(s);
-  if (m) {
-    const iso = m[3] + '-' + pad2_(Number(m[2])) + '-' + pad2_(Number(m[1]));
-    return isIsoDate_(iso) ? iso : null;
-  }
-  m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (m) return isIsoDate_(s) ? s : null;
-  return null;
+/** Datum als Text (TT.MM.JJJJ, T.M.JJJJ, JJJJ-MM-TT) → ISO oder null. */
+function parseDateText_(s) {
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(s);
+  const iso = m ? m[3] + '-' + pad2_(Number(m[2])) + '-' + pad2_(Number(m[1])) : s;
+  return isIsoDate_(iso) ? iso : null;
 }
 
 function pad2_(n) {
@@ -168,37 +160,38 @@ function norm_(s) {
 // ===== Schema.gs =====
 
 /**
- * Schema.gs – Aufbau des Sheets (Tabs, Spalten, Formate, Vorgaben). Reine Daten.
+ * Schema.gs – Aufbau des Sheets: Tabs, Spalten, Formate, Typen und Prüfregeln. Reine Daten.
  *
- * Spalten werden über die Überschrift gefunden, nicht über die Position. setup() legt
- * fehlende Tabs und Spalten an und lässt vorhandene Daten unangetastet.
+ * Einzige Stelle, an der Spalten definiert sind: setup() legt sie an, readRows_() liest und prüft sie.
+ * Spalten mit `key` werden gelesen (type: date | number | text | time); `required` fehlt/ungültig → Zeile
+ * wird mit Hinweis ignoriert; optional ungültig → Hinweis, Wert leer. Gefunden wird über die Überschrift.
  */
 
 function schema_() {
   const DATE = 'dd.mm.yyyy';
   const TEXT = '@';
+  const STAMP = 'dd.mm.yyyy hh:mm';
   return [
     {
       name: 'Ablesungen',
       columns: [
-        { name: 'Datum', format: DATE },
-        { name: 'Uhrzeit', format: TEXT },
-        { name: 'Stand_m3', format: '0.000' },
-        { name: 'Zähler', format: TEXT },
-        { name: 'Quelle', format: TEXT, list: ['App', 'Sheet', 'Übergabe', 'Rechnung'] },
-        { name: 'Modell', format: TEXT, list: ['ausschließen'] },
-        { name: 'ID', format: TEXT },
-        { name: 'Erfasst_am', format: 'dd.mm.yyyy hh:mm' },
+        { name: 'Datum', key: 'date', type: 'date', required: true, format: DATE },
+        { name: 'Uhrzeit', key: 'time', type: 'time', format: TEXT },
+        { name: 'Stand_m3', key: 'value', type: 'number', required: true, min: 0, max: 9999999, format: '0.000' },
+        { name: 'Zähler', key: 'meter', type: 'text', format: TEXT },
+        { name: 'Quelle', key: 'source', type: 'text', format: TEXT, list: ['App', 'Sheet', 'Übergabe', 'Rechnung'] },
+        { name: 'Modell', key: 'model', type: 'text', format: TEXT, list: ['ausschließen'] },
+        { name: 'Erfasst_am', format: STAMP },
         { name: 'Notiz', format: TEXT },
       ],
     },
     {
       name: 'Tarife',
       columns: [
-        { name: 'Gültig_ab', format: DATE },
-        { name: 'Arbeitspreis_ct_kWh', format: '0.00' },
-        { name: 'Grundpreis_EUR_Monat', format: '0.00' },
-        { name: 'Anbieter', format: TEXT },
+        { name: 'Gültig_ab', key: 'from', type: 'date', required: true, format: DATE },
+        { name: 'Arbeitspreis_ct_kWh', key: 'ap', type: 'number', required: true, min: 0.01, max: 100, format: '0.00' },
+        { name: 'Grundpreis_EUR_Monat', key: 'gp', type: 'number', required: true, min: 0, max: 200, format: '0.00' },
+        { name: 'Anbieter', key: 'name', type: 'text', format: TEXT },
         { name: 'Tarif', format: TEXT },
         { name: 'Notiz', format: TEXT },
       ],
@@ -206,36 +199,36 @@ function schema_() {
     {
       name: 'Umrechnung',
       columns: [
-        { name: 'Gültig_ab', format: DATE },
-        { name: 'Brennwert_kWh_m3', format: '0.000' },
-        { name: 'Zustandszahl', format: '0.0000' },
-        { name: 'Status', format: TEXT, list: ['Schätzung', 'Rechnung'] },
+        { name: 'Gültig_ab', key: 'from', type: 'date', required: true, format: DATE },
+        { name: 'Brennwert_kWh_m3', key: 'hs', type: 'number', required: true, min: 8, max: 13, format: '0.000' },
+        { name: 'Zustandszahl', key: 'z', type: 'number', required: true, min: 0.8, max: 1.1, format: '0.0000' },
+        { name: 'Status', key: 'status', type: 'text', format: TEXT, list: ['Schätzung', 'Rechnung'] },
         { name: 'Notiz', format: TEXT },
       ],
     },
     {
       name: 'Abschläge',
       columns: [
-        { name: 'Gültig_ab', format: DATE },
-        { name: 'Betrag_EUR', format: '0.00' },
-        { name: 'Fälligkeitstag', format: '0' },
+        { name: 'Gültig_ab', key: 'from', type: 'date', required: true, format: DATE },
+        { name: 'Betrag_EUR', key: 'amount', type: 'number', required: true, min: 0, max: 9999, format: '0.00' },
+        { name: 'Fälligkeitstag', key: 'day', type: 'number', min: 1, max: 31, format: '0' },
         { name: 'Notiz', format: TEXT },
       ],
     },
     {
       name: 'Perioden',
       columns: [
-        { name: 'Name', format: TEXT },
-        { name: 'Start', format: DATE },
-        { name: 'Ende', format: DATE },
+        { name: 'Name', key: 'name', type: 'text', format: TEXT },
+        { name: 'Start', key: 'start', type: 'date', required: true, format: DATE },
+        { name: 'Ende', key: 'end', type: 'date', required: true, format: DATE },
         { name: 'Notiz', format: TEXT },
       ],
     },
     {
       name: 'Einstellungen',
       columns: [
-        { name: 'Schlüssel', format: TEXT },
-        { name: 'Wert' },
+        { name: 'Schlüssel', key: 'key', type: 'text', required: true, format: TEXT },
+        { name: 'Wert', key: 'value' }, // Typ je Einstellung, siehe settingDefs_()
         { name: 'Beschreibung', format: TEXT },
       ],
     },
@@ -243,10 +236,10 @@ function schema_() {
       name: 'Wetter',
       system: true,
       columns: [
-        { name: 'Datum', format: 'yyyy-mm-dd' },
-        { name: 'Tm_C', format: '0.0' },
+        { name: 'Datum', key: 'date', type: 'date', required: true, format: 'yyyy-mm-dd' },
+        { name: 'Tm_C', key: 'tm', type: 'number', required: true, min: -50, max: 50, format: '0.0' },
         { name: 'Quelle', format: TEXT },
-        { name: 'Abgerufen_am', format: 'dd.mm.yyyy hh:mm' },
+        { name: 'Abgerufen_am', format: STAMP },
       ],
     },
     {
@@ -295,10 +288,7 @@ function schema_() {
   ];
 }
 
-/**
- * Einstellungen mit Typ und Vorgabe. Fehlende Schlüssel ergänzt setup(); vorhandene Werte
- * bleiben, wie du sie gesetzt hast.
- */
+/** Einstellungen mit Typ und Vorgabe. Fehlende ergänzt setup(); vorhandene Werte bleiben. */
 function settingDefs_() {
   return [
     { key: 'Mindestdatum', type: 'date', value: '', text: 'Frühestes erlaubtes Ablesedatum (z. B. Einzug), leer = keine Grenze' },
@@ -319,17 +309,13 @@ function settingDefs_() {
 /**
  * Domain.gs – Fachlogik für Ablesungen (rein, in Node testbar).
  *
- * Eine Ablesung: { row, date: 'JJJJ-MM-TT', minutes: Zahl|null, t, value, meter, source, exclude, id }
+ * Eine Ablesung: { row, date: 'JJJJ-MM-TT', minutes: Zahl|null, t, value, meter, exclude }
  * t = gebrochene Tagesnummer (Datum + Uhrzeit; ohne Uhrzeit 12:00).
  */
 
-/** Prüft die Eingabe aus der App auf Form und Typ und normalisiert sie. */
-function normalizeReadingInput_(input, defaultMeter) {
+/** Prüft die Eingabe aus der App auf Form und Typ. Der Zähler kommt aus den Einstellungen. */
+function normalizeReadingInput_(input, meter) {
   if (!input || typeof input !== 'object') throw apiError_('BAD_REQUEST', 'Ablesung fehlt');
-  const id = input.id === undefined || input.id === null ? '' : input.id;
-  if (typeof id !== 'string' || (id !== '' && !/^[A-Za-z0-9-]{8,64}$/.test(id))) {
-    throw apiError_('BAD_REQUEST', 'Ungültige ID');
-  }
   if (!isIsoDate_(input.date)) throw apiError_('VALIDATION', 'Ungültiges Datum');
   const minutes = parseTime_(input.time);
   if (typeof minutes === 'number' && isNaN(minutes)) throw apiError_('VALIDATION', 'Ungültige Uhrzeit');
@@ -337,11 +323,7 @@ function normalizeReadingInput_(input, defaultMeter) {
   if (typeof value !== 'number' || !isFinite(value) || value < 0 || value >= 1e7) {
     throw apiError_('VALIDATION', 'Ungültiger Zählerstand');
   }
-  const meter = input.meter === undefined || input.meter === null ? defaultMeter : input.meter;
-  // Enger Zeichensatz: landet als Text im Sheet (keine Formeln wie „=…“ einschleusbar)
-  if (typeof meter !== 'string' || !/^[A-Za-z0-9 ._\/-]{0,40}$/.test(meter)) throw apiError_('BAD_REQUEST', 'Ungültige Zählernummer');
   return {
-    id: id,
     date: input.date,
     minutes: minutes,
     t: readingT_(input.date, minutes),
@@ -352,25 +334,15 @@ function normalizeReadingInput_(input, defaultMeter) {
 }
 
 /**
- * Entscheidet, ob eine neue Ablesung gespeichert wird.
- * ctx: { today, minDate, maxPerDay }
- * Rückgabe { status: 'new' | 'duplicate' } oder wirft VALIDATION / CONFLICT / PLAUSIBILITY.
+ * Entscheidet, ob eine neue Ablesung gespeichert wird. Ein Stand pro Tag und Zähler: gleicher Tag + gleicher
+ * Wert = Duplikat (wiederholtes Senden ist damit immer sicher), anderer Wert = Konflikt.
+ * ctx: { today, minDate, maxPerDay } · Rückgabe { status: 'new' | 'duplicate' } oder wirft.
  */
 function checkNewReading_(r, readings, ctx) {
-  const same = readings.filter(x => x.meter === r.meter);
-  const close = (a, b) => Math.abs(a - b) < 0.0005;
-
-  // Zuerst Duplikate: Wiederholtes Senden muss immer gutgehen, auch wenn sich Regeln geändert haben.
-  if (r.id) {
-    const byId = readings.find(x => x.id === r.id);
-    if (byId) {
-      if (byId.date === r.date && close(byId.value, r.value)) return { status: 'duplicate' };
-      throw apiError_('CONFLICT', 'Diese Ablesung wurde schon mit anderen Werten gespeichert.');
-    }
-  }
+  const same = readings.filter(x => x.meter === r.meter).sort((a, b) => a.t - b.t);
   const sameDay = same.find(x => x.date === r.date);
   if (sameDay) {
-    if (close(sameDay.value, r.value)) return { status: 'duplicate' };
+    if (Math.abs(sameDay.value - r.value) < 0.0005) return { status: 'duplicate' };
     throw apiError_(
       'CONFLICT',
       'Für den ' + deDate_(r.date) + ' gibt es schon den Stand ' + deNum_(sameDay.value, 3) + ' m³. Korrektur bitte im Sheet.',
@@ -382,13 +354,8 @@ function checkNewReading_(r, readings, ctx) {
   if (r.date < lower) throw apiError_('VALIDATION', 'Datum liegt vor dem ' + deDate_(lower));
   if (r.date > ctx.today) throw apiError_('VALIDATION', 'Datum liegt in der Zukunft');
 
-  const sorted = same.slice().sort((a, b) => a.t - b.t);
-  let before = null;
-  let after = null;
-  for (const x of sorted) {
-    if (x.t < r.t) before = x;
-    else if (!after) after = x;
-  }
+  const before = same.filter(x => x.t < r.t).pop() || null;
+  const after = same.find(x => x.t > r.t) || null;
   if (before && r.value < before.value) {
     throw apiError_('VALIDATION', 'Stand ist kleiner als am ' + deDate_(before.date) + ' (' + deNum_(before.value, 3) + ' m³)');
   }
@@ -397,11 +364,11 @@ function checkNewReading_(r, readings, ctx) {
   }
 
   if (!r.confirmed && ctx.maxPerDay > 0) {
-    // Mindestens 1 Stunde Abstand ansetzen, sonst wird die Rate bei Ablesungen um Mitternacht künstlich riesig
-    const gap = dt => Math.max(dt, 1 / 24);
+    // Mindestens 1 Stunde Abstand, sonst wird die Rate bei Ablesungen um Mitternacht künstlich riesig
+    const rate = (dv, dt) => dv / Math.max(dt, 1 / 24);
     const checks = [];
-    if (before) checks.push({ ref: before, perDay: (r.value - before.value) / gap(r.t - before.t) });
-    if (after) checks.push({ ref: after, perDay: (after.value - r.value) / gap(after.t - r.t) });
+    if (before) checks.push({ ref: before, perDay: rate(r.value - before.value, r.t - before.t) });
+    if (after) checks.push({ ref: after, perDay: rate(after.value - r.value, after.t - r.t) });
     for (const c of checks) {
       if (c.perDay > ctx.maxPerDay) {
         throw apiError_(
@@ -415,21 +382,15 @@ function checkNewReading_(r, readings, ctx) {
   return { status: 'new' };
 }
 
-/**
- * Bereinigt die Ablesungen aus dem Sheet: sortiert, entfernt doppelte Tage und meldet
- * Auffälligkeiten. Rückgabe { readings, hints }.
- */
+/** Sortiert je Zähler, entfernt doppelte Tage (erste Zeile zählt) und meldet sie. */
 function cleanReadings_(readings) {
   const hints = [];
   const sorted = readings.slice().sort((a, b) => (a.meter < b.meter ? -1 : a.meter > b.meter ? 1 : a.t - b.t || a.row - b.row));
   const out = [];
   for (const r of sorted) {
-    const prev = out.length ? out[out.length - 1] : null;
+    const prev = out[out.length - 1];
     if (prev && prev.meter === r.meter && prev.date === r.date) {
-      hints.push({
-        level: 'warn',
-        text: 'Ablesungen Zeile ' + prev.row + ' und ' + r.row + ': zwei Stände am ' + deDate_(r.date) + ' – nur Zeile ' + prev.row + ' zählt.',
-      });
+      hints.push({ level: 'warn', text: 'Ablesungen Zeile ' + prev.row + ' und ' + r.row + ': zwei Stände am ' + deDate_(r.date) + ' – nur Zeile ' + prev.row + ' zählt.' });
       continue;
     }
     out.push(r);
@@ -437,52 +398,60 @@ function cleanReadings_(readings) {
   return { readings: out, hints: hints };
 }
 
-/** Umrechnungsfaktor kWh/m³ für ein Datum: letzte Zeile mit Gültig_ab ≤ Datum, sonst Platzhalter. */
-function conversionAt_(conversions, iso, placeholder) {
-  let hit = null;
-  for (const c of conversions) if (c.from <= iso && (!hit || c.from >= hit.from)) hit = c;
-  if (!hit) return { factor: placeholder.z * placeholder.hs, source: 'Platzhalter' };
-  return { factor: hit.z * hit.hs, source: hit.status || 'Tabelle' };
-}
-
 /**
- * Intervalle zwischen aufeinanderfolgenden Ablesungen desselben Zählers.
- * Rückgabe { intervals (neueste zuerst), hints }.
+ * Aufeinanderfolgende Ablesungen desselben Zählers als Paare {a, b, dv}. Rückläufige Stände werden gemeldet
+ * und übersprungen. Einzige Stelle, die festlegt, was ein gültiger Ablesezeitraum ist.
  */
-function buildIntervals_(readings, conversions, placeholder) {
+function readingPairs_(readings) {
+  const pairs = [];
   const hints = [];
-  const intervals = [];
   for (let i = 1; i < readings.length; i++) {
     const a = readings[i - 1];
     const b = readings[i];
     if (a.meter !== b.meter) continue;
-    const days = b.t - a.t;
-    const m3 = round_(b.value - a.value, 3);
-    if (m3 < 0) {
-      hints.push({
-        level: 'warn',
-        text: 'Ablesungen Zeile ' + b.row + ': Stand am ' + deDate_(b.date) + ' ist kleiner als am ' + deDate_(a.date) + ' – Zeitraum wird ignoriert.',
-      });
+    const dv = round_(b.value - a.value, 3);
+    if (dv < 0) {
+      hints.push({ level: 'warn', text: 'Ablesungen Zeile ' + b.row + ': Stand am ' + deDate_(b.date) + ' ist kleiner als am ' + deDate_(a.date) + ' – Zeitraum wird ignoriert.' });
       continue;
     }
-    const conv = conversionAt_(conversions, b.date, placeholder);
-    intervals.push({
-      from: a.date,
-      to: b.date,
-      fromTime: a.minutes === null ? null : formatTime_(a.minutes),
-      toTime: b.minutes === null ? null : formatTime_(b.minutes),
-      meter: b.meter,
-      days: round_(days, 3),
-      m3: m3,
-      m3PerDay: round_(m3 / days, 4),
-      kWh: round_(m3 * conv.factor, 1),
-      kWhPerDay: round_((m3 * conv.factor) / days, 2),
-      conversion: conv.source,
-      excluded: b.exclude === true,
-    });
+    pairs.push({ a: a, b: b, dv: dv });
   }
-  intervals.reverse();
-  return { intervals: intervals, hints: hints };
+  return { pairs: pairs, hints: hints };
+}
+
+/** Letzte Zeile mit from ≤ iso (Liste nach from sortiert) oder null. */
+function validAt_(rows, iso) {
+  let hit = null;
+  for (const r of rows) if (r.from <= iso) hit = r;
+  return hit;
+}
+
+/** kWh je m³ an einem Tag: Brennwert × Zustandszahl aus „Umrechnung“, sonst Platzhalter. */
+function factorAt_(conversions, iso, placeholder) {
+  const c = validAt_(conversions, iso);
+  return c ? { factor: c.z * c.hs, source: c.status || 'Tabelle' } : { factor: placeholder.z * placeholder.hs, source: 'Platzhalter' };
+}
+
+/** Zeiträume zwischen Ablesungen für die Anzeige (neueste zuerst). */
+function buildIntervals_(pairs, conversions, placeholder) {
+  return pairs
+    .map(p => {
+      const days = p.b.t - p.a.t;
+      const conv = factorAt_(conversions, p.b.date, placeholder);
+      return {
+        from: p.a.date,
+        to: p.b.date,
+        meter: p.b.meter,
+        days: round_(days, 3),
+        m3: p.dv,
+        m3PerDay: round_(p.dv / days, 4),
+        kWh: round_(p.dv * conv.factor, 1),
+        kWhPerDay: round_((p.dv * conv.factor) / days, 2),
+        conversion: conv.source,
+        excluded: p.b.exclude === true,
+      };
+    })
+    .reverse();
 }
 
 // ===== Calc.gs =====
@@ -550,53 +519,41 @@ function degreeDays_(tm, heizgrenze, raum) {
 }
 
 /**
- * Verteilt den Verbrauch jedes Ableseintervalls nach HGT auf die Tage (ohne Wärmebedarf oder ohne
- * Temperatur gleichmäßig). Rückgabe { m3: {iso: m³}, covered: {iso: Anteil 0–1}, hints }.
+ * Verteilt den Verbrauch jedes Ablesepaars nach HGT auf die Tage (ohne Wärmebedarf oder ohne Temperatur
+ * gleichmäßig). Rückgabe { m3: {iso: m³}, covered: {iso: Anteil 0–1}, hints }.
  */
-function distributeReadings_(readings, temps, heizgrenze) {
+function distributeReadings_(pairs, temps, heizgrenze) {
   const m3 = {};
   const covered = {};
-  const hints = [];
-  const missingIntervals = [];
-  for (let i = 1; i < readings.length; i++) {
-    const a = readings[i - 1];
-    const b = readings[i];
-    if (a.meter !== b.meter) continue;
-    const dv = b.value - a.value;
-    if (dv < 0) continue; // wird in buildIntervals_ gemeldet
+  const missing = [];
+  for (const p of pairs) {
     const parts = [];
     let sumW = 0;
-    let missing = false;
-    for (let d = Math.floor(a.t); d < b.t; d++) {
-      const f = Math.min(b.t, d + 1) - Math.max(a.t, d);
+    let gap = false;
+    for (let d = Math.floor(p.a.t); d < p.b.t; d++) {
+      const f = Math.min(p.b.t, d + 1) - Math.max(p.a.t, d);
       if (f <= 1e-9) continue;
       const iso = isoFromDayNumber_(d);
       const tm = temps[iso] ? temps[iso].tm : null;
-      if (tm === null) missing = true;
+      if (tm === null) gap = true;
       const w = tm === null ? 0 : f * Math.max(0, heizgrenze - tm);
       parts.push({ iso: iso, f: f, w: w });
       sumW += w;
     }
-    const uniform = missing || sumW <= 1e-9;
-    if (missing) missingIntervals.push(deDate_(a.date) + '–' + deDate_(b.date));
-    const total = uniform ? b.t - a.t : sumW;
-    for (const p of parts) {
-      m3[p.iso] = (m3[p.iso] || 0) + (dv * (uniform ? p.f : p.w)) / total;
-      covered[p.iso] = (covered[p.iso] || 0) + p.f;
+    if (gap) missing.push(deDate_(p.a.date) + '–' + deDate_(p.b.date));
+    const uniform = gap || sumW <= 1e-9;
+    const total = uniform ? p.b.t - p.a.t : sumW;
+    for (const x of parts) {
+      m3[x.iso] = (m3[x.iso] || 0) + (p.dv * (uniform ? x.f : x.w)) / total;
+      covered[x.iso] = (covered[x.iso] || 0) + x.f;
     }
   }
-  if (missingIntervals.length) {
-    const list = missingIntervals.length <= 3 ? ' (' + missingIntervals.join(', ') + ')' : '';
-    hints.push({ level: 'warn', text: missingIntervals.length + ' Zeitraum/Zeiträume ohne vollständige Temperatur' + list + ' – Verbrauch dort gleichmäßig verteilt.' });
+  const hints = [];
+  if (missing.length) {
+    const list = missing.length <= 3 ? ' (' + missing.join(', ') + ')' : '';
+    hints.push({ level: 'warn', text: missing.length + ' Zeitraum/Zeiträume ohne vollständige Temperatur' + list + ' – Verbrauch dort gleichmäßig verteilt.' });
   }
   return { m3: m3, covered: covered, hints: hints };
-}
-
-/** Letzte Zeile mit from ≤ iso (Liste nach from sortiert) oder null. */
-function validAt_(rows, iso) {
-  let hit = null;
-  for (const r of rows) if (r.from <= iso) hit = r;
-  return hit;
 }
 
 /** Grundpreis pro Tag aus Monatspreis: „Jahr“ = × 12 / 365, „Kalendermonat“ = / Tage des Monats. */
@@ -617,7 +574,7 @@ function paymentSchedule_(rows, fromIso, toIso) {
     let y = Number(r.from.slice(0, 4));
     let m = Number(r.from.slice(5, 7));
     for (let guard = 0; guard < 1200; guard++) {
-      const day = Math.min(Math.max(1, r.day || 1), daysInMonth_(y, m));
+      const day = Math.min(Math.max(1, Math.round(r.day || 1)), daysInMonth_(y, m));
       const iso = y + '-' + pad2_(m) + '-' + pad2_(day);
       if (iso >= until || iso > toIso) break;
       if (iso >= r.from && iso >= fromIso && r.amount) out.push({ date: iso, amount: r.amount });
@@ -651,7 +608,7 @@ function dailyNormals_(weather, fromYear, toYear, heizgrenze) {
 }
 
 /**
- * Gesamtrechnung. in: { readings (bereinigt, sortiert), weather {iso: tm}, conversions, placeholder,
+ * Gesamtrechnung. in: { readings (bereinigt, sortiert), pairs (readingPairs_), weather {iso: tm}, conversions, placeholder,
  * tariffs [{from, ap, gp}], payments [{from, amount, day}], periods [{name, start, end}], settings, today }
  * Rückgabe { days, months, periods, hints, weatherLast }.
  */
@@ -670,7 +627,7 @@ function computeAll_(input) {
   const from = periodStart < first ? periodStart : first;
   const to = input.today;
   const temps = fillTemps_(input.weather, from, to);
-  const dist = distributeReadings_(readings, temps, heizgrenze);
+  const dist = distributeReadings_(input.pairs, temps, heizgrenze);
   hints.push.apply(hints, dist.hints);
 
   const lastFullYear = Number(to.slice(0, 4)) - 1;
@@ -681,7 +638,7 @@ function computeAll_(input) {
     const t = temps[iso];
     const dd = degreeDays_(t.tm, heizgrenze, raum);
     const m3 = dist.m3[iso] === undefined ? null : dist.m3[iso];
-    const conv = conversionAt_(input.conversions, iso, input.placeholder);
+    const conv = factorAt_(input.conversions, iso, input.placeholder);
     const kWh = m3 === null ? null : m3 * conv.factor;
     const tariff = validAt_(input.tariffs, iso);
     const costWork = kWh === null || !tariff ? null : (kWh * tariff.ap) / 100;
@@ -780,7 +737,7 @@ function summarizePeriod_(p, days, paymentRows, today, hints) {
   if (ended && !complete) {
     hints.push({ level: 'warn', text: 'Periode „' + p.name + '“: ' + round_(uncovered, 1) + ' Tag(e) ohne Ablesung – Verbrauch dort fehlt in der Summe.' });
   }
-  if (!all.length) hints.push({ level: 'info', text: 'Periode „' + p.name + '“: keine Abschläge eingetragen (Tab „Abschläge“).' });
+  if (!all.length && p.start <= today) hints.push({ level: 'info', text: 'Periode „' + p.name + '“: keine Abschläge eingetragen (Tab „Abschläge“).' });
   const cost = costWork + costBase;
   return {
     name: p.name,
@@ -790,7 +747,6 @@ function summarizePeriod_(p, days, paymentRows, today, hints) {
     complete: complete,
     totalDays: totalDays,
     elapsedDays: elapsedDays,
-    coveredDays: round_(covered, 2),
     measuredUntil: measuredUntil,
     m3: round_(m3, 3),
     kWh: round_(kWh, 1),
@@ -800,9 +756,7 @@ function summarizePeriod_(p, days, paymentRows, today, hints) {
     paymentsCount: due.length,
     paymentsPaid: round_(paid, 2),
     paymentsCountTotal: all.length,
-    paymentsTotal: round_(all.reduce((s, x) => s + x.amount, 0), 2),
     balance: round_(cost - paid, 2), // > 0 Nachzahlung, < 0 Guthaben (Stand heute)
-    tariffMissing: tariffMissing,
   };
 }
 
@@ -816,17 +770,19 @@ function isoOfDate_(d) {
   return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
 }
 
-/** Liest einen Tab komplett: { sheet, cols: {Überschrift: Index}, rows: [{row, v, d}] }. */
-function readTable_(ss, tabName) {
+function sheet_(ss, tabName) {
   const sheet = ss.getSheetByName(tabName);
   if (!sheet) throw apiError_('NOT_CONFIGURED', 'Tab „' + tabName + '“ fehlt – im Sheet „Gaszähler → Einrichten / aktualisieren“ wählen.');
-  const lastRow = sheet.getLastRow();
-  const lastCol = sheet.getLastColumn();
-  const table = { sheet: sheet, cols: {}, lastCol: lastCol, rows: [] };
-  if (lastRow < 1 || lastCol < 1) return table;
-  const range = sheet.getRange(1, 1, lastRow, lastCol);
+  return sheet;
+}
+
+/** Liest einen Tab komplett: { sheet, cols: {Überschrift: Index}, width, rows: [{row, v, d}] }. */
+function readTable_(ss, tabName) {
+  const sheet = sheet_(ss, tabName);
+  const range = sheet.getDataRange();
   const values = range.getValues();
-  const display = range.getDisplayValues(); // Uhrzeit & Texte so, wie du sie siehst
+  const display = range.getDisplayValues(); // so, wie du es siehst (Uhrzeit, Texte, Datum)
+  const table = { sheet: sheet, cols: {}, width: values[0].length, rows: [] };
   values[0].forEach((h, i) => {
     const name = norm_(h);
     if (name && !(name in table.cols)) table.cols[name] = i;
@@ -838,198 +794,127 @@ function readTable_(ss, tabName) {
   return table;
 }
 
-function requireCols_(table, tabName, names) {
-  const missing = names.filter(n => !(n in table.cols));
+/** Zellwert nach Typ: null = leer, NaN = ungültig. */
+function parseCell_(type, raw, text) {
+  if (text === '' && (raw === '' || raw === null)) return null;
+  if (type === 'date') return parseDateText_(text) || (isDate_(raw) ? isoOfDate_(raw) : NaN);
+  if (type === 'number') return typeof raw === 'number' ? raw : parseNumberDe_(text);
+  if (type === 'time') return parseTime_(text);
+  return text;
+}
+
+/**
+ * Liest einen Tab nach Schema: { rows: [{row, <key>: Wert}], hints }. Pflichtfeld fehlt/ungültig → Zeile
+ * ignoriert; optionales Feld ungültig → leer. Beides mit Hinweis (nie stilles Verwerfen).
+ */
+function readRows_(ss, tabName) {
+  const def = schema_().find(d => d.name === tabName);
+  const table = readTable_(ss, tabName);
+  const cols = def.columns.filter(c => c.key && c.type);
+  const missing = cols.filter(c => c.required && !(c.name in table.cols)).map(c => c.name);
   if (missing.length) {
     throw apiError_('NOT_CONFIGURED', 'Im Tab „' + tabName + '“ fehlt die Spalte „' + missing.join('“, „') + '“ – „Gaszähler → Einrichten / aktualisieren“ wählen.');
   }
+  const rows = [];
+  const hints = [];
+  for (const r of table.rows) {
+    const out = { row: r.row };
+    let skip = null;
+    for (const c of cols) {
+      const i = table.cols[c.name];
+      const v = i === undefined ? null : parseCell_(c.type, r.v[i], norm_(r.d[i]));
+      const bad = typeof v === 'number' && (isNaN(v) || (c.min !== undefined && v < c.min) || (c.max !== undefined && v > c.max));
+      if (bad || (v === null && c.required)) {
+        const why = v === null ? 'fehlt' : 'ungültig' + (c.min !== undefined ? ' (erlaubt ' + deRange_(c) + ')' : '');
+        if (c.required) {
+          skip = c.name + ' ' + why;
+          break;
+        }
+        hints.push({ level: 'warn', text: tabName + ' Zeile ' + r.row + ': ' + c.name + ' ' + why + ' – wird ignoriert.' });
+        out[c.key] = null;
+      } else {
+        out[c.key] = v;
+      }
+    }
+    if (skip) hints.push({ level: 'warn', text: tabName + ' Zeile ' + r.row + ': ' + skip + ' – Zeile wird ignoriert.' });
+    else rows.push(out);
+  }
+  return { rows: rows, hints: hints };
 }
 
-function val_(table, row, name) {
-  const i = table.cols[name];
-  return i === undefined ? '' : row.v[i];
+function deRange_(c) {
+  return String(c.min).replace('.', ',') + '–' + String(c.max).replace('.', ',');
 }
 
-function text_(table, row, name) {
-  const i = table.cols[name];
-  return i === undefined ? '' : norm_(row.d[i]);
-}
+const byFrom_ = (a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0);
 
 /** Einstellungen mit Vorgaben: { values: {Schlüssel: Wert}, hints }. */
 function readSettings_(ss) {
   const table = readTable_(ss, 'Einstellungen');
-  requireCols_(table, 'Einstellungen', ['Schlüssel', 'Wert']);
-  const raw = {};
-  for (const row of table.rows) {
-    const key = text_(table, row, 'Schlüssel');
-    if (key && !(key in raw)) raw[key] = { v: val_(table, row, 'Wert'), d: text_(table, row, 'Wert'), row: row.row };
+  const iKey = table.cols['Schlüssel'];
+  const iVal = table.cols['Wert'];
+  if (iKey === undefined || iVal === undefined) throw apiError_('NOT_CONFIGURED', 'Tab „Einstellungen“ unvollständig – „Gaszähler → Einrichten / aktualisieren“ wählen.');
+  const cells = {};
+  for (const r of table.rows) {
+    const key = norm_(r.d[iKey]);
+    if (key && !(key in cells)) cells[key] = { raw: r.v[iVal], text: norm_(r.d[iVal]) };
   }
   const values = {};
   const hints = [];
   for (const def of settingDefs_()) {
-    const cell = raw[def.key];
-    let value = def.value;
-    if (cell && cell.d !== '') {
-      if (def.type === 'number') {
-        const n = parseNumberDe_(cell.v);
-        if (isNaN(n)) hints.push({ level: 'warn', text: 'Einstellung „' + def.key + '“ ist keine Zahl – Vorgabe ' + def.value + ' gilt.' });
-        else value = n;
-      } else if (def.type === 'date') {
-        const iso = parseDateValue_(cell.v, isoOfDate_);
-        if (!iso) hints.push({ level: 'warn', text: 'Einstellung „' + def.key + '“ ist kein Datum – wird ignoriert.' });
-        else value = iso;
-      } else {
-        value = cell.d;
-      }
-    }
-    values[def.key] = value;
+    const cell = cells[def.key];
+    const v = cell ? parseCell_(def.type, cell.raw, cell.text) : null;
+    if (typeof v === 'number' && isNaN(v)) hints.push({ level: 'warn', text: 'Einstellung „' + def.key + '“ ist ungültig – Vorgabe gilt.' });
+    values[def.key] = v === null || (typeof v === 'number' && isNaN(v)) ? def.value : v;
   }
   return { values: values, hints: hints };
 }
 
-/** Ablesungen aus dem Sheet: { readings, hints }. Ungültige Zeilen werden gemeldet, nicht still verworfen. */
+/** Ablesungen: [{row, date, minutes, t, value, meter, exclude}] + Hinweise. */
 function readReadings_(ss) {
-  const table = readTable_(ss, 'Ablesungen');
-  requireCols_(table, 'Ablesungen', ['Datum', 'Stand_m3']);
-  const readings = [];
-  const hints = [];
-  for (const row of table.rows) {
-    const date = parseDateValue_(val_(table, row, 'Datum'), isoOfDate_);
-    const value = parseNumberDe_(val_(table, row, 'Stand_m3'));
-    if (!date) {
-      hints.push({ level: 'warn', text: 'Ablesungen Zeile ' + row.row + ': Datum fehlt oder ist ungültig – Zeile wird ignoriert.' });
-      continue;
-    }
-    if (isNaN(value) || value < 0) {
-      hints.push({ level: 'warn', text: 'Ablesungen Zeile ' + row.row + ': Stand fehlt oder ist keine Zahl – Zeile wird ignoriert.' });
-      continue;
-    }
-    let minutes = parseTime_(text_(table, row, 'Uhrzeit'));
-    if (typeof minutes === 'number' && isNaN(minutes)) {
-      hints.push({ level: 'warn', text: 'Ablesungen Zeile ' + row.row + ': Uhrzeit nicht lesbar (HH:MM) – 12:00 angenommen.' });
-      minutes = null;
-    }
-    readings.push({
-      row: row.row,
-      date: date,
-      minutes: minutes,
-      t: readingT_(date, minutes),
-      value: value,
-      meter: text_(table, row, 'Zähler'),
-      source: text_(table, row, 'Quelle'),
-      exclude: text_(table, row, 'Modell').toLowerCase() === 'ausschließen',
-      id: text_(table, row, 'ID'),
-    });
-  }
+  const res = readRows_(ss, 'Ablesungen');
+  const readings = res.rows.map(r => ({
+    row: r.row,
+    date: r.date,
+    minutes: r.time,
+    t: readingT_(r.date, r.time),
+    value: r.value,
+    meter: r.meter || '',
+    exclude: (r.model || '').toLowerCase() === 'ausschließen',
+  }));
   const meters = {};
   readings.forEach(r => (meters[r.meter] = true));
   if ('' in meters && Object.keys(meters).length > 1) {
-    hints.push({ level: 'warn', text: 'Ablesungen: Zeilen mit und ohne Zählernummer gemischt – Zeiträume dazwischen fehlen. Bitte überall die Nummer eintragen.' });
+    res.hints.push({ level: 'warn', text: 'Ablesungen: Zeilen mit und ohne Zählernummer gemischt – Zeiträume dazwischen fehlen. Bitte überall die Nummer eintragen.' });
   }
-  return { readings: readings, hints: hints };
+  return { readings: readings, hints: res.hints };
 }
 
-/** Umrechnung (Brennwert × Zustandszahl) aus dem Sheet: { conversions, hints }. */
-function readConversions_(ss) {
-  const table = readTable_(ss, 'Umrechnung');
-  requireCols_(table, 'Umrechnung', ['Gültig_ab', 'Brennwert_kWh_m3', 'Zustandszahl']);
-  const conversions = [];
-  const hints = [];
-  for (const row of table.rows) {
-    const from = parseDateValue_(val_(table, row, 'Gültig_ab'), isoOfDate_);
-    const hs = parseNumberDe_(val_(table, row, 'Brennwert_kWh_m3'));
-    const z = parseNumberDe_(val_(table, row, 'Zustandszahl'));
-    if (!from || !(hs >= 8 && hs <= 13) || !(z >= 0.8 && z <= 1.1)) {
-      hints.push({ level: 'warn', text: 'Umrechnung Zeile ' + row.row + ': Datum, Brennwert (8–13) oder Zustandszahl (0,8–1,1) unplausibel – Zeile wird ignoriert.' });
+function readSorted_(ss, tabName) {
+  const res = readRows_(ss, tabName);
+  res.rows.sort(byFrom_);
+  return res;
+}
+
+/** Perioden: [{name, start, end}] + Hinweise. */
+function readPeriods_(ss) {
+  const res = readRows_(ss, 'Perioden');
+  const periods = [];
+  for (const p of res.rows) {
+    if (p.end < p.start) {
+      res.hints.push({ level: 'warn', text: 'Perioden Zeile ' + p.row + ': Ende liegt vor Start – Zeile wird ignoriert.' });
       continue;
     }
-    conversions.push({ from: from, hs: hs, z: z, status: text_(table, row, 'Status') });
+    periods.push({ name: p.name || 'Periode Zeile ' + p.row, start: p.start, end: p.end });
   }
-  return { conversions: conversions, hints: hints };
+  periods.sort((a, b) => (a.start < b.start ? -1 : 1));
+  return { periods: periods, hints: res.hints };
 }
 
-/** Hängt eine geprüfte Ablesung an und sortiert, falls sie nachgetragen wurde. */
-function appendReading_(ss, r, existing) {
-  const table = readTable_(ss, 'Ablesungen');
-  requireCols_(table, 'Ablesungen', ['Datum', 'Uhrzeit', 'Stand_m3', 'Zähler', 'Quelle', 'ID', 'Erfasst_am']);
-  const row = [];
-  for (let i = 0; i < table.lastCol; i++) row.push('');
-  const put = (name, value) => (row[table.cols[name]] = value);
-  put('Datum', Utilities.parseDate(r.date, TZ, 'yyyy-MM-dd')); // echtes Datum, Mitternacht Berlin
-  put('Uhrzeit', r.minutes === null ? '' : formatTime_(r.minutes));
-  put('Stand_m3', r.value);
-  put('Zähler', safeText_(r.meter));
-  put('Quelle', 'App');
-  put('ID', r.id);
-  put('Erfasst_am', now_());
-  const sheet = table.sheet;
-  const newRow = sheet.getLastRow() + 1;
-  sheet.getRange(newRow, 1, 1, row.length).setValues([row]);
-  const latest = existing.reduce((m, x) => Math.max(m, x.t), -Infinity);
-  if (r.t < latest) {
-    sheet.getRange(2, 1, newRow - 1, row.length).sort([
-      { column: table.cols['Datum'] + 1, ascending: true },
-      { column: table.cols['Uhrzeit'] + 1, ascending: true },
-    ]);
-  }
-}
-
-/** Schreibt ins Protokoll (rollierend, höchstens ~600 Zeilen). Fehler hier dürfen nie die Anfrage scheitern lassen. */
-function logEvent_(ss, level, event, details) {
-  try {
-    const sheet = ss.getSheetByName('Protokoll');
-    if (!sheet) return;
-    sheet.appendRow([now_(), level, safeText_(event), safeText_(String(details === undefined ? '' : details).slice(0, 2000))]);
-    if (sheet.getLastRow() > 600) sheet.deleteRows(2, 100);
-  } catch (e) {
-    console.error('Protokoll nicht schreibbar: ' + e);
-  }
-}
-
-// ----- ab M2: Wetter, Tarife, Abschläge, Perioden, Ergebnistabellen -----
-
-const WEATHER_CACHE_KEY = 'weather-v1';
-
-/** Wetter als { map: {iso: tm}, last }. Mit kurzem Cache (kompakt kodiert, < 100 KB). */
-function readWeather_(ss, noCache) {
-  const cache = CacheService.getScriptCache();
-  if (!noCache) {
-    const hit = cache.get(WEATHER_CACHE_KEY);
-    if (hit) return decodeWeather_(hit);
-  }
-  const table = readTable_(ss, 'Wetter');
+/** Wetter als { map: {iso: tm}, last }. */
+function readWeather_(ss) {
   const map = {};
-  for (const row of table.rows) {
-    const iso = parseDateValue_(text_(table, row, 'Datum'), isoOfDate_) || parseDateValue_(val_(table, row, 'Datum'), isoOfDate_);
-    const tm = parseNumberDe_(val_(table, row, 'Tm_C'));
-    if (iso && !isNaN(tm)) map[iso] = tm;
-  }
-  const result = { map: map, last: Object.keys(map).sort().pop() || null };
-  try {
-    cache.put(WEATHER_CACHE_KEY, encodeWeather_(map), 21600);
-  } catch (e) {
-    /* zu groß o. Ä. – dann eben ohne Cache */
-  }
-  return result;
-}
-
-/** „JJJJ-MM-TT|v,v,,v“ – eine Zahl je Tag ab Startdatum, leer = fehlt. */
-function encodeWeather_(map) {
-  const keys = Object.keys(map).sort();
-  if (!keys.length) return '|';
-  const vals = isoRange_(keys[0], keys[keys.length - 1]).map(d => (map[d] === undefined ? '' : String(map[d])));
-  return keys[0] + '|' + vals.join(',');
-}
-
-function decodeWeather_(s) {
-  const parts = s.split('|');
-  const map = {};
-  if (!parts[0]) return { map: map, last: null };
-  let n = dayNumber_(parts[0]);
-  for (const v of parts[1].split(',')) {
-    if (v !== '') map[isoFromDayNumber_(n)] = Number(v);
-    n++;
-  }
+  readRows_(ss, 'Wetter').rows.forEach(r => (map[r.date] = r.tm));
   return { map: map, last: Object.keys(map).sort().pop() || null };
 }
 
@@ -1039,13 +924,11 @@ function writeWeather_(ss, map, station) {
     .sort()
     .map(iso => [berlinMidnight_(iso), map[iso], 'DWD ' + station, now]);
   writeTable_(ss, 'Wetter', rows);
-  CacheService.getScriptCache().remove(WEATHER_CACHE_KEY);
 }
 
 /** Ersetzt alle Datenzeilen eines System-Tabs (Kopfzeile bleibt). */
 function writeTable_(ss, tabName, rows) {
-  const sheet = ss.getSheetByName(tabName);
-  if (!sheet) throw apiError_('NOT_CONFIGURED', 'Tab „' + tabName + '“ fehlt – „Gaszähler → Einrichten / aktualisieren“ wählen.');
+  const sheet = sheet_(ss, tabName);
   const width = sheet.getLastColumn();
   const old = sheet.getLastRow();
   if (old > 1) sheet.getRange(2, 1, old - 1, width).clearContent();
@@ -1055,65 +938,45 @@ function writeTable_(ss, tabName, rows) {
   sheet.getRange(2, 1, rows.length, width).setValues(rows.map(r => r.concat(new Array(Math.max(0, width - r.length)).fill('')).slice(0, width)));
 }
 
-/** Tarife: [{from, ap (ct/kWh), gp (€/Monat)}] nach Datum sortiert. */
-function readTariffs_(ss) {
-  const table = readTable_(ss, 'Tarife');
-  requireCols_(table, 'Tarife', ['Gültig_ab', 'Arbeitspreis_ct_kWh', 'Grundpreis_EUR_Monat']);
-  const rows = [];
-  const hints = [];
-  for (const row of table.rows) {
-    const from = parseDateValue_(val_(table, row, 'Gültig_ab'), isoOfDate_);
-    const ap = parseNumberDe_(val_(table, row, 'Arbeitspreis_ct_kWh'));
-    const gp = parseNumberDe_(val_(table, row, 'Grundpreis_EUR_Monat'));
-    if (!from || !(ap > 0 && ap < 100) || !(gp >= 0 && gp < 200)) {
-      hints.push({ level: 'warn', text: 'Tarife Zeile ' + row.row + ': Datum, Arbeitspreis (ct/kWh) oder Grundpreis (€/Monat) fehlt/unplausibel – Zeile wird ignoriert.' });
-      continue;
-    }
-    rows.push({ from: from, ap: ap, gp: gp, name: text_(table, row, 'Anbieter') });
-  }
-  rows.sort((a, b) => (a.from < b.from ? -1 : 1));
-  return { tariffs: rows, hints: hints };
+/**
+ * Hängt eine geprüfte Ablesung an und sortiert, falls sie nachgetragen wurde.
+ * Rückgabe: Zeilennummer, oder 0, wenn sortiert wurde (Zeilennummern haben sich verschoben).
+ */
+function appendReading_(ss, r, existing) {
+  const table = readTable_(ss, 'Ablesungen');
+  const row = new Array(table.width).fill('');
+  const put = (name, value) => {
+    if (name in table.cols) row[table.cols[name]] = value;
+  };
+  put('Datum', Utilities.parseDate(r.date, TZ, 'yyyy-MM-dd')); // echtes Datum, Mitternacht Berlin
+  put('Uhrzeit', r.minutes === null ? '' : formatTime_(r.minutes));
+  put('Stand_m3', r.value);
+  put('Zähler', safeText_(r.meter));
+  put('Quelle', 'App');
+  put('Erfasst_am', now_());
+  const sheet = table.sheet;
+  const newRow = sheet.getLastRow() + 1;
+  sheet.getRange(newRow, 1, 1, row.length).setValues([row]);
+  const latest = existing.reduce((m, x) => Math.max(m, x.t), -Infinity);
+  if (r.t >= latest) return newRow;
+  const col = name => table.cols[name] + 1;
+  sheet.getRange(2, 1, newRow - 1, row.length).sort([
+    { column: col('Datum'), ascending: true },
+    { column: col('Uhrzeit'), ascending: true },
+  ]);
+  return 0;
 }
 
-/** Abschläge: [{from, amount, day}] nach Datum sortiert. */
-function readPaymentRows_(ss) {
-  const table = readTable_(ss, 'Abschläge');
-  requireCols_(table, 'Abschläge', ['Gültig_ab', 'Betrag_EUR']);
-  const rows = [];
-  const hints = [];
-  for (const row of table.rows) {
-    const from = parseDateValue_(val_(table, row, 'Gültig_ab'), isoOfDate_);
-    const amount = parseNumberDe_(val_(table, row, 'Betrag_EUR'));
-    const dayRaw = val_(table, row, 'Fälligkeitstag');
-    const day = dayRaw === '' ? 1 : parseNumberDe_(dayRaw);
-    if (!from || !(amount >= 0 && amount < 10000) || !(day >= 1 && day <= 31)) {
-      hints.push({ level: 'warn', text: 'Abschläge Zeile ' + row.row + ': Datum, Betrag oder Fälligkeitstag (1–31) fehlt/unplausibel – Zeile wird ignoriert.' });
-      continue;
-    }
-    rows.push({ from: from, amount: amount, day: Math.round(day) });
+/** Schreibt ins Protokoll (rollierend, höchstens ~600 Zeilen). Fehler hier lassen nie die Anfrage scheitern. */
+function logEvent_(ss, level, event, details) {
+  try {
+    const sheet = ss.getSheetByName('Protokoll');
+    if (!sheet) return;
+    sheet.appendRow([now_(), level, safeText_(event), safeText_(String(details === undefined ? '' : details).slice(0, 2000))]);
+    if (sheet.getLastRow() > 600) sheet.deleteRows(2, 100);
+  } catch (e) {
+    console.error('Protokoll nicht schreibbar: ' + e);
   }
-  rows.sort((a, b) => (a.from < b.from ? -1 : 1));
-  return { payments: rows, hints: hints };
-}
-
-/** Perioden: [{name, start, end}]. */
-function readPeriods_(ss) {
-  const table = readTable_(ss, 'Perioden');
-  requireCols_(table, 'Perioden', ['Name', 'Start', 'Ende']);
-  const periods = [];
-  const hints = [];
-  for (const row of table.rows) {
-    const name = text_(table, row, 'Name') || 'Periode Zeile ' + row.row;
-    const start = parseDateValue_(val_(table, row, 'Start'), isoOfDate_);
-    const end = parseDateValue_(val_(table, row, 'Ende'), isoOfDate_);
-    if (!start || !end || end < start) {
-      hints.push({ level: 'warn', text: 'Perioden Zeile ' + row.row + ': Start/Ende fehlt oder Ende vor Start – Zeile wird ignoriert.' });
-      continue;
-    }
-    periods.push({ name: name, start: start, end: end });
-  }
-  periods.sort((a, b) => (a.start < b.start ? -1 : 1));
-  return { periods: periods, hints: hints };
 }
 
 // ===== Weather.gs =====
@@ -1209,7 +1072,7 @@ function fetchDwdHistorical_(station, fromIso) {
 function updateWeather_(ss, settings) {
   const station = dwdStation_(settings.DWD_Station);
   const from = settings.Wetter_ab || '2020-01-01';
-  const known = readWeather_(ss, true).map;
+  const known = readWeather_(ss).map;
   const merged = {};
   Object.keys(known).forEach(d => (merged[d] = known[d]));
   const notes = [];
@@ -1236,38 +1099,43 @@ function updateWeather_(ss, settings) {
 // ===== Overview.gs =====
 
 /**
- * Overview.gs – sammelt alle Eingaben, rechnet und baut die Übersicht für die App.
+ * Overview.gs – liest alle Tabs, rechnet und baut die Übersicht für die App.
  */
 
-/** Liest alle Tabs und rechnet. Rückgabe { s, today, readings, result, intervals, hints, weatherLast }. */
-function computeFromSheet_(ss) {
+/**
+ * Rechnet alles aus dem Sheet. `pre` (optional): schon gelesene { settings, readings } – spart beim Speichern
+ * einer Ablesung zwei Lesezugriffe. Rückgabe { s, today, readings, intervals, result, hints, weatherLast }.
+ */
+function computeFromSheet_(ss, pre) {
   const today = Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd');
-  const settings = readSettings_(ss);
+  const settings = pre ? pre.settings : readSettings_(ss);
+  const raw = pre ? pre.readings : readReadings_(ss);
   const s = settings.values;
-  const raw = readReadings_(ss);
-  const conv = readConversions_(ss);
-  const tar = readTariffs_(ss);
-  const pay = readPaymentRows_(ss);
+  const conv = readSorted_(ss, 'Umrechnung');
+  const tar = readSorted_(ss, 'Tarife');
+  const pay = readSorted_(ss, 'Abschläge');
   const per = readPeriods_(ss);
   const weather = readWeather_(ss);
   const cleaned = cleanReadings_(raw.readings);
+  const pairs = readingPairs_(cleaned.readings);
   const placeholder = { z: s.Platzhalter_Zustandszahl, hs: s.Platzhalter_Brennwert_kWh_m3 };
-  const iv = buildIntervals_(cleaned.readings, conv.conversions, placeholder);
+  const intervals = buildIntervals_(pairs.pairs, conv.rows, placeholder);
   const result = computeAll_({
     readings: cleaned.readings,
+    pairs: pairs.pairs,
     weather: weather.map,
-    conversions: conv.conversions,
+    conversions: conv.rows,
     placeholder: placeholder,
-    tariffs: tar.tariffs,
-    payments: pay.payments,
+    tariffs: tar.rows,
+    payments: pay.rows,
     periods: per.periods,
     settings: s,
     today: today,
   });
 
-  const hints = [].concat(settings.hints, raw.hints, conv.hints, tar.hints, pay.hints, per.hints, cleaned.hints, iv.hints, result.hints);
+  const hints = [].concat(settings.hints, raw.hints, conv.hints, tar.hints, pay.hints, per.hints, cleaned.hints, pairs.hints, result.hints);
   if (!cleaned.readings.length) hints.push({ level: 'info', text: 'Noch keine Ablesung gespeichert.' });
-  if (iv.intervals.some(i => i.conversion === 'Platzhalter')) {
+  if (intervals.some(i => i.conversion === 'Platzhalter')) {
     hints.push({
       level: 'info',
       text: 'kWh mit Platzhalter (Zustandszahl ' + deNum_(placeholder.z, 4) + ' × Brennwert ' + deNum_(placeholder.hs, 3) +
@@ -1282,11 +1150,11 @@ function computeFromSheet_(ss) {
   if (cleaned.readings.length && !per.periods.some(p => p.start <= today && p.end >= today)) {
     hints.push({ level: 'info', text: 'Keine Abrechnungsperiode für heute – im Tab „Perioden“ eine neue anlegen.' });
   }
-  return { s: s, today: today, readings: cleaned.readings, intervals: iv.intervals, result: result, hints: hints, weatherLast: weather.last };
+  return { s: s, today: today, readings: cleaned.readings, intervals: intervals, result: result, hints: hints, weatherLast: weather.last };
 }
 
-function buildOverview_(ss) {
-  const c = computeFromSheet_(ss);
+function buildOverview_(ss, pre) {
+  const c = computeFromSheet_(ss, pre);
   const s = c.s;
   let last = null;
   for (const r of c.readings) if (!last || r.t > last.t) last = r;
@@ -1295,17 +1163,13 @@ function buildOverview_(ss) {
     today: c.today,
     api: API_VERSION,
     schema: SCHEMA_VERSION,
-    settings: {
-      minDate: s.Mindestdatum || MIN_DATE,
-      maxPerDay: s.Plausi_max_m3_pro_Tag,
-      meter: s.Zähler_aktuell,
-    },
-    last: last ? { date: last.date, time: last.minutes === null ? null : formatTime_(last.minutes), value: last.value, meter: last.meter } : null,
+    settings: { minDate: s.Mindestdatum || MIN_DATE, maxPerDay: s.Plausi_max_m3_pro_Tag },
+    last: last ? { date: last.date, time: last.minutes === null ? null : formatTime_(last.minutes), value: last.value } : null,
     readingsCount: c.readings.length,
     intervals: c.intervals,
     months: c.result.months.slice(-14),
     periods: c.result.periods,
-    weather: { last: c.weatherLast, station: dwdStation_(s.DWD_Station), source: 'Deutscher Wetterdienst' },
+    weather: { last: c.weatherLast, station: dwdStation_(s.DWD_Station) },
     hints: c.hints,
   };
 }
@@ -1340,7 +1204,6 @@ function json_(obj) {
 }
 
 function handlePost_(e) {
-  let authed = false;
   let ss = null;
   try {
     const body = parseBody_(e);
@@ -1348,20 +1211,16 @@ function handlePost_(e) {
     if (!props.KEY || !props.SHEET_ID) {
       throw apiError_('NOT_CONFIGURED', 'Server ist noch nicht eingerichtet – im Sheet „Gaszähler → Einrichten / aktualisieren“ wählen.');
     }
-    if (!safeEqual_(body.key, props.KEY)) {
-      noteAuthFailure_(props.SHEET_ID);
-      throw apiError_('AUTH', 'Falscher Schlüssel');
-    }
-    authed = true;
+    if (!safeEqual_(body.key, props.KEY)) throw apiError_('AUTH', 'Falscher Schlüssel');
     ss = SpreadsheetApp.openById(props.SHEET_ID);
     if (body.action === 'overview') return ok_({ overview: buildOverview_(ss) });
     if (body.action === 'addReading') return ok_(addReadingAction_(ss, body.reading));
     throw apiError_('BAD_REQUEST', 'Unbekannte Aktion');
   } catch (err) {
     if (err && err.code) return fail_(err.code, err.message, err.details);
-    // Unerwarteter Fehler: vor der Anmeldung nichts verraten, danach Meldung zeigen und protokollieren.
-    if (!authed) return fail_('SERVER', 'Serverfehler');
-    if (ss) logEvent_(ss, 'FEHLER', 'api', (err && err.stack) || String(err));
+    // Unerwarteter Fehler: vor der Anmeldung (ss noch null) nichts verraten, danach zeigen und protokollieren.
+    if (!ss) return fail_('SERVER', 'Serverfehler');
+    logEvent_(ss, 'FEHLER', 'api', (err && err.stack) || String(err));
     return fail_('SERVER', 'Serverfehler: ' + ((err && err.message) || String(err)));
   }
 }
@@ -1396,37 +1255,25 @@ function addReadingAction_(ss, input) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw apiError_('BUSY', 'Server ist gerade beschäftigt – bitte gleich nochmal.');
   try {
-    const settings = readSettings_(ss).values;
-    const r = normalizeReadingInput_(input, settings.Zähler_aktuell);
-    const existing = readReadings_(ss).readings;
-    const today = Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd');
-    const res = checkNewReading_(r, existing, {
-      today: today,
-      minDate: settings.Mindestdatum,
-      maxPerDay: settings.Plausi_max_m3_pro_Tag,
+    const settings = readSettings_(ss);
+    const readings = readReadings_(ss);
+    const s = settings.values;
+    const r = normalizeReadingInput_(input, s.Zähler_aktuell);
+    const res = checkNewReading_(r, readings.readings, {
+      today: Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd'),
+      minDate: s.Mindestdatum,
+      maxPerDay: s.Plausi_max_m3_pro_Tag,
     });
+    let pre = { settings: settings, readings: readings };
     if (res.status === 'new') {
-      appendReading_(ss, r, existing);
+      const row = appendReading_(ss, r, readings.readings);
       SpreadsheetApp.flush(); // laut Doku vor dem Freigeben der Sperre
+      // Schon Gelesenes weiterverwenden; nach Sortierung (Nachtrag) stimmen die Zeilennummern nicht mehr → neu lesen
+      pre = row ? { settings: settings, readings: { readings: readings.readings.concat([Object.assign({ row: row, exclude: false }, r)]), hints: readings.hints } } : null;
     }
-    return { saved: res.status, overview: buildOverview_(ss) };
+    return { saved: res.status, overview: buildOverview_(ss, pre) };
   } finally {
     lock.releaseLock();
-  }
-}
-
-/** Zählt falsche Schlüssel pro Stunde und protokolliert bei 1, 10, 100, 1000 Versuchen. */
-function noteAuthFailure_(sheetId) {
-  try {
-    const cache = CacheService.getScriptCache();
-    const hourKey = 'authfail-' + Utilities.formatDate(now_(), TZ, 'yyyyMMddHH');
-    const n = Number(cache.get(hourKey) || 0) + 1;
-    cache.put(hourKey, String(n), 7200);
-    if ([1, 10, 100, 1000].indexOf(n) >= 0 && sheetId) {
-      logEvent_(SpreadsheetApp.openById(sheetId), 'WARN', 'auth', n + ' falsche(r) Schlüssel in dieser Stunde');
-    }
-  } catch (x) {
-    console.error('Zählung fehlgeschlagen: ' + x);
   }
 }
 
@@ -1463,20 +1310,20 @@ function runDaily_(ss) {
       parts.push('Wetter-Fehler: ' + e.message);
       logEvent_(ss, 'WARN', 'wetter', e.message);
     }
-    parts.push(writeResultTables_(ss));
+    const tables = writeResultTables_(ss);
+    parts.push(tables.text);
     const text = parts.join(' · ');
     logEvent_(ss, weatherError ? 'WARN' : 'INFO', 'täglich', text);
     // Nur melden, wenn die Daten wirklich veralten (ein Ausfall des DWD für einen Tag ist kein Problem).
-    const last = readWeather_(ss, true).last;
-    const today = Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd');
-    const stale = !last || dayNumber_(today) - dayNumber_(last) > 3;
+    const last = tables.weatherLast;
+    const stale = !last || dayNumber_(tables.today) - dayNumber_(last) > 3;
     return { text: text, fatal: weatherError && stale ? weatherError : null };
   } finally {
     lock.releaseLock();
   }
 }
 
-/** Schreibt „Tage“ und „Monate“ neu. Rückgabe: Bericht. */
+/** Schreibt „Tage“ und „Monate“ neu. Rückgabe { text, weatherLast, today }. */
 function writeResultTables_(ss) {
   const c = computeFromSheet_(ss);
   const v = x => (x === null || x === undefined ? '' : x);
@@ -1498,7 +1345,7 @@ function writeResultTables_(ss) {
   writeTable_(ss, 'Tage', dayRows);
   const monthRows = c.result.months.map(m => [m.month, m.days, m.hgt, v(m.hgtNormal), m.m3, m.kWh, v(m.cost), m.coverage]);
   writeTable_(ss, 'Monate', monthRows);
-  return 'Tage: ' + dayRows.length + ', Monate: ' + monthRows.length;
+  return { text: 'Tage: ' + dayRows.length + ', Monate: ' + monthRows.length, weatherLast: c.weatherLast, today: c.today };
 }
 
 /** Legt den täglichen Trigger genau einmal an (alte Trigger dieser Funktion werden ersetzt). */
@@ -1524,8 +1371,17 @@ function menuDaily() {
  * Einstellungen an, ändert aber keine vorhandenen Daten.
  */
 
-/** Einmalig (und nach jedem Update) im Skript-Editor ausführen. */
+/** Einmalig (und nach jedem Update) im Skript-Editor ausführen – Ergebnis steht im Ausführungsprotokoll. */
 function setup() {
+  Logger.log(runSetup_());
+}
+
+/** Dasselbe über das Menü im Sheet – mit Meldung (im Editor würde die Meldung unsichtbar im Sheet warten). */
+function menuSetup() {
+  showAlert_('Gaszähler', runSetup_());
+}
+
+function runSetup_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) {
     throw new Error('Kein Sheet gefunden: Das Skript muss aus dem Sheet heraus angelegt sein (Erweiterungen → Apps Script).');
@@ -1553,9 +1409,7 @@ function setup() {
   lines.push(daily.text);
   if (newKey) lines.push('Neuer Schlüssel für die App: ' + props.getProperty('KEY'));
   else lines.push('Schlüssel unverändert – anzeigen über „Gaszähler → Schlüssel anzeigen“.');
-  const text = lines.join('\n\n');
-  Logger.log(text);
-  showAlert_('Gaszähler', text);
+  return lines.join('\n\n');
 }
 
 /** Legt fehlende Tabs/Spalten/Einstellungen an. Rückgabe: Liste der Änderungen. */
@@ -1632,7 +1486,7 @@ function onOpen() {
     .addItem('Wetter aktualisieren & neu berechnen', 'menuDaily')
     .addItem('Schlüssel anzeigen', 'menuShowKey')
     .addSeparator()
-    .addItem('Einrichten / aktualisieren', 'setup')
+    .addItem('Einrichten / aktualisieren', 'menuSetup')
     .addItem('Neuen Schlüssel erzeugen …', 'menuRotateKey')
     .addToUi();
 }

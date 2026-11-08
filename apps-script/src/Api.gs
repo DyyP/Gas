@@ -26,7 +26,6 @@ function json_(obj) {
 }
 
 function handlePost_(e) {
-  let authed = false;
   let ss = null;
   try {
     const body = parseBody_(e);
@@ -34,20 +33,16 @@ function handlePost_(e) {
     if (!props.KEY || !props.SHEET_ID) {
       throw apiError_('NOT_CONFIGURED', 'Server ist noch nicht eingerichtet – im Sheet „Gaszähler → Einrichten / aktualisieren“ wählen.');
     }
-    if (!safeEqual_(body.key, props.KEY)) {
-      noteAuthFailure_(props.SHEET_ID);
-      throw apiError_('AUTH', 'Falscher Schlüssel');
-    }
-    authed = true;
+    if (!safeEqual_(body.key, props.KEY)) throw apiError_('AUTH', 'Falscher Schlüssel');
     ss = SpreadsheetApp.openById(props.SHEET_ID);
     if (body.action === 'overview') return ok_({ overview: buildOverview_(ss) });
     if (body.action === 'addReading') return ok_(addReadingAction_(ss, body.reading));
     throw apiError_('BAD_REQUEST', 'Unbekannte Aktion');
   } catch (err) {
     if (err && err.code) return fail_(err.code, err.message, err.details);
-    // Unerwarteter Fehler: vor der Anmeldung nichts verraten, danach Meldung zeigen und protokollieren.
-    if (!authed) return fail_('SERVER', 'Serverfehler');
-    if (ss) logEvent_(ss, 'FEHLER', 'api', (err && err.stack) || String(err));
+    // Unerwarteter Fehler: vor der Anmeldung (ss noch null) nichts verraten, danach zeigen und protokollieren.
+    if (!ss) return fail_('SERVER', 'Serverfehler');
+    logEvent_(ss, 'FEHLER', 'api', (err && err.stack) || String(err));
     return fail_('SERVER', 'Serverfehler: ' + ((err && err.message) || String(err)));
   }
 }
@@ -82,36 +77,24 @@ function addReadingAction_(ss, input) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw apiError_('BUSY', 'Server ist gerade beschäftigt – bitte gleich nochmal.');
   try {
-    const settings = readSettings_(ss).values;
-    const r = normalizeReadingInput_(input, settings.Zähler_aktuell);
-    const existing = readReadings_(ss).readings;
-    const today = Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd');
-    const res = checkNewReading_(r, existing, {
-      today: today,
-      minDate: settings.Mindestdatum,
-      maxPerDay: settings.Plausi_max_m3_pro_Tag,
+    const settings = readSettings_(ss);
+    const readings = readReadings_(ss);
+    const s = settings.values;
+    const r = normalizeReadingInput_(input, s.Zähler_aktuell);
+    const res = checkNewReading_(r, readings.readings, {
+      today: Utilities.formatDate(now_(), TZ, 'yyyy-MM-dd'),
+      minDate: s.Mindestdatum,
+      maxPerDay: s.Plausi_max_m3_pro_Tag,
     });
+    let pre = { settings: settings, readings: readings };
     if (res.status === 'new') {
-      appendReading_(ss, r, existing);
+      const row = appendReading_(ss, r, readings.readings);
       SpreadsheetApp.flush(); // laut Doku vor dem Freigeben der Sperre
+      // Schon Gelesenes weiterverwenden; nach Sortierung (Nachtrag) stimmen die Zeilennummern nicht mehr → neu lesen
+      pre = row ? { settings: settings, readings: { readings: readings.readings.concat([Object.assign({ row: row, exclude: false }, r)]), hints: readings.hints } } : null;
     }
-    return { saved: res.status, overview: buildOverview_(ss) };
+    return { saved: res.status, overview: buildOverview_(ss, pre) };
   } finally {
     lock.releaseLock();
-  }
-}
-
-/** Zählt falsche Schlüssel pro Stunde und protokolliert bei 1, 10, 100, 1000 Versuchen. */
-function noteAuthFailure_(sheetId) {
-  try {
-    const cache = CacheService.getScriptCache();
-    const hourKey = 'authfail-' + Utilities.formatDate(now_(), TZ, 'yyyyMMddHH');
-    const n = Number(cache.get(hourKey) || 0) + 1;
-    cache.put(hourKey, String(n), 7200);
-    if ([1, 10, 100, 1000].indexOf(n) >= 0 && sheetId) {
-      logEvent_(SpreadsheetApp.openById(sheetId), 'WARN', 'auth', n + ' falsche(r) Schlüssel in dieser Stunde');
-    }
-  } catch (x) {
-    console.error('Zählung fehlgeschlagen: ' + x);
   }
 }
