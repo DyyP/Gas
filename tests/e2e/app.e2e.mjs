@@ -345,6 +345,25 @@ test('Analyse: alle fünf Karten, Tabellen aufklappbar, Tooltip per Tippen', asy
   await context.close();
 });
 
+test('Schmale Bildschirme (iPhone SE 320 px, iPhone 11 Pro 375 px): nichts ragt seitlich heraus', async () => {
+  for (const width of [320, 375]) {
+    const { context, page, mock } = await openApp();
+    mock.estimate = true;
+    [['2025-11-01', 1865], ['2025-11-03', 1879], ['2025-11-10', 1910], ['2025-11-20', 1950], ['2025-12-01', 2010]].forEach(([date, value], i) =>
+      mock.readings.push({ id: `b000000${i}`, date, time: null, value }));
+    await page.setViewportSize({ width, height: 800 });
+    for (const view of ['erfassen', 'prognose', 'analyse', 'einstellungen']) {
+      await page.goto(`${base}#${view}`);
+      await page.reload();
+      await page.locator(`#view-${view}`).waitFor();
+      await page.waitForTimeout(150);
+      const w = await page.evaluate(() => document.documentElement.scrollWidth);
+      assert.ok(w <= width, `${view} bei ${width} px: Seite ist ${w} px breit`);
+    }
+    await context.close();
+  }
+});
+
 test('Altes Server-Skript wird klar gemeldet statt „keine Periode“', async () => {
   const { context, page, mock } = await openApp();
   const orig = mock.overview;
