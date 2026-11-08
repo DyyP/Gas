@@ -22,8 +22,7 @@ function computeFromInputs_(inp) {
   const cleaned = cleanReadings_(inp.readings.readings);
   const pairs = readingPairs_(cleaned.readings);
   const placeholder = { z: s.Platzhalter_Zustandszahl, hs: s.Platzhalter_Brennwert_kWh_m3 };
-  const intervals = buildIntervals_(pairs.pairs, inp.conversions.rows, placeholder);
-  const result = computeAll_({
+  const input = {
     readings: cleaned.readings,
     pairs: pairs.pairs,
     weather: inp.weather.map,
@@ -34,7 +33,12 @@ function computeFromInputs_(inp) {
     periods: inp.periods.periods,
     settings: s,
     today: today,
-  });
+  };
+  const result = computeAll_(input);
+  const intervals = buildIntervals_(pairs.pairs, inp.conversions.rows, placeholder, result.temps);
+  const now = now_();
+  const nowT = dayNumber_(today) + (parseTime_(Utilities.formatDate(now, TZ, 'HH:mm')) || 0) / 1440;
+  const insights = cleaned.readings.length ? insights_(result, input, nowT) : null;
 
   const hints = [].concat(
     inp.settings.hints, inp.readings.hints, inp.conversions.hints, inp.tariffs.hints, inp.payments.hints, inp.periods.hints,
@@ -59,7 +63,7 @@ function computeFromInputs_(inp) {
   }
   return {
     s: s, today: today, readings: cleaned.readings, intervals: intervals, result: result, hints: hints, weatherLast: last,
-    conversions: inp.conversions.rows, placeholder: placeholder,
+    conversions: inp.conversions.rows, placeholder: placeholder, insights: insights,
   };
 }
 
@@ -101,6 +105,7 @@ function buildOverview_(ss, c) {
         }
       : null,
     rating: c.result.rating,
+    insights: c.insights,
     weather: { last: c.weatherLast, station: dwdStation_(s.DWD_Station) },
     hints: c.hints,
   };

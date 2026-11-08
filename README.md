@@ -7,11 +7,13 @@ und am PC im Browser. Kostenlos, kein eigener Server:
 App (GitHub Pages, Ordner docs/)  ──POST──►  Google Apps Script (Web-App)  ──►  Google Sheet „GasWerte“
 ```
 
-**Stand: V1 / Meilenstein M3** – Ablesungen erfassen (auch offline), Tagesmitteltemperatur der DWD-Station Mannheim
+**Stand: V1 / Meilenstein M4** – Ablesungen erfassen (auch offline), Tagesmitteltemperatur der DWD-Station Mannheim
 (täglich automatisch, Historie ab 2020), Verbrauchsmodell mit Heizgrenze aus deinen Daten, Verbrauch modellgewichtet auf
-Tage verteilt, kWh und Kosten taggenau, **Prognose bis Periodenende** (Nachzahlung/Guthaben mit 80-%-Bereich),
-**Abschlagsempfehlung**, Ampel zur Verlässlichkeit, Plausibilitätsprüfung mit dem Modell.
-Diagramme (M4) folgen. Plan und Entscheidungen: [KONZEPT.md](KONZEPT.md).
+Tage verteilt, kWh und Kosten taggenau, **Prognose bis Periodenende** (Nachzahlung/Guthaben mit 80-%-Bereich, als
+Verlaufsdiagramm), **Abschlagsempfehlung**, Ampel zur Verlässlichkeit, Plausibilitätsprüfung mit dem Modell.
+Dazu **Live-Zähler** (geschätzter Stand jetzt) und eine **Analyse-Seite**: Heizkurve, Monate gegen Normalwetter,
+Kosten pro Tag mit Sparrechner, Heizkalender, Heizsaison-Fortschritt.
+Plan und Entscheidungen: [KONZEPT.md](KONZEPT.md).
 
 Wetterdaten: Quelle **Deutscher Wetterdienst** (DWD Opendata, CC BY 4.0).
 
@@ -107,7 +109,9 @@ Fehlende Tage (z. B. heute) werden vorläufig fortgeschrieben bzw. interpoliert 
 - [ ] Sheet → Gaszähler → Daten prüfen → keine unerwarteten Auffälligkeiten
 - [ ] Tab `Wetter` gefüllt ab 01.01.2020 bis gestern, `Tage`/`Monate` gefüllt, Protokoll-Eintrag „täglich“
 - [ ] Apps Script → **Trigger** (Wecker-Symbol): genau ein Trigger `taeglich`, täglich 13–14 Uhr
-- [ ] App → Auswertung: Prognose-Grundlage mit Ampel, Abrechnungszeiträume mit Saldo/Prognose/Empfehlung, Monate
+- [ ] App → Erfassen: Live-Zähler zählt weiter (alle 10 s), Vergleich mit dem echten Zähler passt im Rahmen von ±
+- [ ] App → Prognose: Ampel, Abrechnungszeiträume mit Saldo/Prognose/Empfehlung und Diagramm
+- [ ] App → Analyse: fünf Karten, Antippen zeigt Details, Tippen daneben schließt; Tabellen aufklappbar
 
 ---
 
@@ -138,7 +142,7 @@ node tools/render-icons.mjs        # Icons aus tools/assets/icon.svg
 | Ordner | Inhalt |
 |---|---|
 | `docs/` | Web-App (wird von GitHub Pages ausgeliefert) |
-| `apps-script/src/` | Backend-Quellen (Util, Schema, Domain, Calc, Store, Weather, Overview, Api, Job, Setup) |
+| `apps-script/src/` | Backend-Quellen (Util, Schema, Domain, Model, Calc, Forecast, Insights, Store, Weather, Overview, Api, Job, Setup) |
 | `dist/` | gebündeltes Backend zum Einfügen (generiert, CI prüft Aktualität) |
 | `tests/` | `unit/`, `backend/`, `repo/`, `e2e/`, `fakes/` |
 | `tools/` | Bündeln, lokaler Server, Icons |

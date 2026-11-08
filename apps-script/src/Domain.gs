@@ -135,12 +135,13 @@ function factorAt_(conversions, iso, placeholder) {
   return c ? { factor: c.z * c.hs, source: c.status || 'Tabelle' } : { factor: placeholder.z * placeholder.hs, source: 'Platzhalter' };
 }
 
-/** Zeiträume zwischen Ablesungen für die Anzeige (neueste zuerst). */
-function buildIntervals_(pairs, conversions, placeholder) {
+/** Zeiträume zwischen Ablesungen für die Anzeige (neueste zuerst); mit temps auch die mittlere Temperatur. */
+function buildIntervals_(pairs, conversions, placeholder, temps) {
   return pairs
     .map(p => {
       const days = p.b.t - p.a.t;
       const conv = factorAt_(conversions, p.b.date, placeholder);
+      const td = temps ? pairDays_(p, temps) : null;
       return {
         from: p.a.date,
         to: p.b.date,
@@ -152,6 +153,7 @@ function buildIntervals_(pairs, conversions, placeholder) {
         kWhPerDay: round_((p.dv * conv.factor) / days, 2),
         conversion: conv.source,
         excluded: p.b.exclude === true,
+        tmean: td ? round_(td.reduce((s, x) => s + x.f * x.tm, 0) / days, 2) : null,
       };
     })
     .reverse();

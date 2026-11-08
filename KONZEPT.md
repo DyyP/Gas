@@ -1,6 +1,6 @@
 # Gaszähler V1 – Konzept
 
-Stand: 08.11.2026 · Status: **freigegeben**, M1–M3 umgesetzt.
+Stand: 08.11.2026 · Status: **freigegeben**, M1–M4 umgesetzt.
 Lebendes Dokument – Quelle der Wahrheit für Entscheidungen und für spätere Sessions.
 
 ---
@@ -47,6 +47,14 @@ Jahresabrechnung, 7-Tage-Vorhersage in der Prognose, ESP32-Sensor, Erinnerungen.
 | 08.11. | **M3:** Ampel nach Datenmenge (HGT-Abdeckung) und Unsicherheit von a; CV(RMSE) nur als Information | Ablesezeiträume sind unregelmäßig (2–75 Tage); ASHRAEs 15 % gilt für Monatswerte und wäre hier dauerhaft „gelb“, ohne etwas über die Prognosegüte zu sagen |
 | 08.11. | **M3:** Heizgrenze aus Daten (ab 6 Zeiträumen, Raster 10–18 °C), Verteilung auf Tage mit dem Modell | deine Daten: 12,5 °C statt Norm 15 °C – bessere Anpassung, konsistente Tageswerte |
 | 08.11. | **M3:** Plausibilität mit Modell: Rückfrage bei Abweichung > max(3 σ, 2 m³) | Test mit deinen 24 Zeiträumen: 0 Fehlalarme; fängt Tippfehler, die unter 20 m³/Tag bleiben |
+| 08.11. | **M4:** vier Ansichten mit Symbolen: Erfassen (mit Live-Zähler) · Prognose · Analyse · Einstellungen; alte Adresse `#auswertung` führt zur Prognose | Prognose (Geld) und Analyse (Verhalten) sind verschiedene Fragen; Erfassen bleibt der Startpunkt |
+| 08.11. | **M4:** nur dunkles Design; Farbe hat Bedeutung: Bernstein = Gas/Kosten, Blau = Kälte, Grau = Kontext, Koralle/Dunkelgrün = Nachzahlung/Guthaben, immer mit Wort + Pfeil | Wunsch Nutzer („mehr Farbe, Rot entsättigt, dunkleres Grün“); Koralle ↔ Grün auch bei Rot-Grün-Schwäche unterscheidbar (ΔE 10,9, dataviz-Validator) |
+| 08.11. | **M4:** Analyse in der Reihenfolge Heizkurve · Monate gegen Normalwetter · Kosten pro Tag + Sparrechner · Heizkalender · Heizsaison; Tabellen aufklappbar darunter | Reihenfolge Nutzer (Ideen 5, 6, 9, 3, 2) |
+| 08.11. | **M4:** Live-Zähler = Modell seit der letzten Ablesung (Server) + heutige Rate seit dem Datenstand (App, alle 10 s) | kein Server-Aufruf pro Sekunde; ± zeigt die Modellunsicherheit |
+| 08.11. | **M4:** Heizsaison = 01.08.–31.07., Fortschritt nach **normalen Heizgradtagen**, nicht nach Kalendertagen | Am 08.11. sind 27 % der Kalendertage, aber nur 6 % des Heizbedarfs vorbei |
+| 08.11. | **M4:** Sparrechner aus dem Modell (1 °C kühler ≈ Heizgrenze 1 K tiefer), Hinweis auf die 6-%-Faustregel | dein Modell ergibt ≈ 16 %, weil du erst unter 12,5 °C heizt (mittlere Differenz an Heiztagen ≈ 6 K statt ≈ 18 K) |
+| 08.11. | **M4:** Tooltips per Antippen, Tippen daneben schließt; Tabellen bleiben als Datenzugang | iPhone kennt kein „Maus weg“; Diagramme sind nur mit Zeiger bedienbar |
+| 08.11. | **Backlog:** PDF-Export | Wunsch Nutzer „für später“ |
 | 08.11. | Optimierungen: nach dem Speichern keine zweite Übersichtsanfrage, beim Speichern bereits gelesene Daten weiterverwenden, `getDataRange` | Kaltstarts von Apps Script kosten bis ~15 s pro Anfrage; Übersichts-Cache erst nach Messung |
 
 ---
@@ -185,7 +193,20 @@ Ergebnis P10/P50/P90, Monatsbänder, Abschlagsempfehlung, größte Unsicherheits
 Rot: < 3 Intervalle oder < 10 % HGT-Abdeckung · Gelb: < 40 % Abdeckung oder rel. Unsicherheit a > 10 % oder
 CV > 15 % · Grün: sonst. Dazu ein Satz in Klartext.
 
-### 6.7 Plausibilität (M1 umgesetzt)
+### 6.7 Analyse (M4, umgesetzt in `Insights.gs` + `docs/js/analyse.js`)
+
+- **Live-Zähler:** Erwartung und σ für den Zeitraum letzte Ablesung → jetzt (wie ein Ablesezeitraum), dazu m³, kWh
+  und € pro Tag bei der heutigen Temperatur (Arbeitspreis + Grundpreis je Tag).
+- **Heizkurve:** je Ablesezeitraum mittlere Temperatur (`intervals[].tmean`) gegen kWh/Tag; Linie = Modell
+  b + a · max(0, θ − t). Punkte im Übergang liegen etwas über der Linie (Mittel über warme und kalte Tage).
+- **Monate gegen Normalwetter:** `months[].kWhNormal` = Σ (b + a · Normal-HGT) × Faktor. Im Tooltip zusätzlich
+  „bei diesem Wetter erwartet“ = kWhNormal + a_kWh · (HGT − Normal-HGT) → trennt Wetter von Verhalten.
+- **Kosten pro Tag:** Kurve über −10…20 °C zum aktuellen Tarif. **Sparrechner:** Normal-HGT(θ) − Normal-HGT(θ − 1).
+- **Heizkalender:** die letzten 366 Tage, Wert = kWh des Tages (Teil-Tage hochgerechnet), Glut-Skala mit Wurzel,
+  Obergrenze = 95-%-Quantil. Einzelne Tage sind modellverteilt, nicht gemessen (steht unter der Karte).
+- **Heizsaison:** Anteil der normalen HGT seit 01.08., Skala Okt/Jan/Apr an den Monatsersten (`season.marks`).
+
+### 6.8 Plausibilität (M1 umgesetzt)
 
 Hart (Server lehnt ab): ungültig, Zukunft, vor Mindestdatum, negativ, nicht monoton (auch beim Nachtragen),
 anderer Wert am selben Tag. Weich (Rückfrage, dann `confirmed`): > Plausi_max_m3_pro_Tag (Vorgabe 20) gegenüber
@@ -217,8 +238,10 @@ Quoten (Privatkonto): 6 min/Ausführung, 90 min Trigger/Tag, 20.000 UrlFetch/Tag
 
 ## 8. Frontend (`docs/`)
 
-Ansichten Erfassen · Auswertung · Einstellungen (Hash-Routing). ES-Module: `api`, `queue`, `plausi`, `format`,
-`storage`, `render`, `main`. Offline-Warteschlange (zuerst lokal speichern, dann senden; Zustände wartet/Rückfrage/
+Ansichten Erfassen · Prognose · Analyse · Einstellungen (Hash-Routing, Leiste unten mit Symbolen). ES-Module: `api`,
+`queue`, `plausi`, `format`, `storage`, `render`, `charts` (SVG-Helfer, Prognose-Diagramm, Tooltip), `analyse`
+(fünf Analyse-Karten), `main`. Diagramme als SVG ohne Bibliothek; Farben über CSS-Klassen, nur die Glut-Skala als
+berechnete Farbe (CSP erlaubt keine Inline-Styles). Offline-Warteschlange (zuerst lokal speichern, dann senden; Zustände wartet/Rückfrage/
 abgelehnt; Auslöser Start, `online`, Sichtbarwerden, Knopf; Timeout 45 s wegen Kaltstarts). Service Worker:
 Netz zuerst (3 s, Revalidierung) → sonst Cache, API unberührt, `updateViaCache: 'none'`. Datum springt über
 Mitternacht mit, solange du es nicht selbst änderst.
@@ -231,7 +254,9 @@ Mitternacht mit, solange du es nicht selbst änderst.
 Apps-Script-Attrappe (`tests/fakes/gas.mjs`: Setup, Schlüssel, Validierung, Duplikate, Nachtragen, Sortierung,
 Plausibilität, Sperre, Intervalle, Zählertausch, Umrechnung), Repo (Versionen, Bündel, CSP, keine Geheimnisse).
 `node --test tests/e2e/app.e2e.mjs`: Chromium in iPhone-Größe mit simuliertem Server (Ersteinrichtung, online,
-offline + genau einmal senden, Rückfrage, Ablehnung, Service-Worker-Offlinestart). CI: beides bei jedem Push.
+offline + genau einmal senden, Rückfrage, Ablehnung, Live-Zähler, alle Analyse-Karten mit Tooltip per Tippen,
+Service-Worker-Offlinestart). Backend M4 (`m4.test.mjs`): Schätzung seit letzter Ablesung, Kalender, Sparrechner,
+Saison-Skala gegen ein Wetter mit bekannter Lösung. CI: beides bei jedem Push.
 
 Grenze der Tests: Die Attrappe bildet Apps Script nach – echtes Verhalten prüft die Abnahme-Checkliste (README).
 
@@ -244,7 +269,8 @@ Grenze der Tests: Die Attrappe bildet Apps Script nach – echtes Verhalten prü
 | **M1 Fundament** | Repo, CI, Schema/Setup, API, App (Erfassen, Warteschlange, Service Worker), Sicherheit | ✅ umgesetzt, Abnahme durch dich offen |
 | **M2 Wetter & Kosten** | DWD (Historie ab 2020 + täglich), Tage/Monate, Kosten taggenau, Abschläge, Saldo je Periode, Hinweise | ✅ umgesetzt |
 | **M3 Modell & Prognose** | Modell mit Heizgrenze, Monte Carlo, Ampel, Abschlagsempfehlung, Plausibilität mit Modell | ✅ umgesetzt |
-| **M4 Dashboard** | Diagramme (SVG), Periodenauswahl, Feinschliff | offen |
+| **M4 Dashboard** | Farben, Navigation mit Symbolen, Prognose-Diagramm, Live-Zähler, Analyse (Heizkurve, Monate gegen Normalwetter, Kosten pro Tag + Sparrechner, Heizkalender, Heizsaison), Tooltips | ✅ umgesetzt |
+| **Backlog** | PDF-Export (Jahresbericht) | später |
 
 ---
 
@@ -286,3 +312,5 @@ GitHub Pages: [Quelle /docs](https://docs.github.com/en/pages/getting-started-wi
 [Limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
 Gasabrechnung: [MVV Netze Merkblatt](https://www.mvv-netze.de/fileadmin/user_upload_mvv-netze/Dokumente/energie_beziehen/netzentgelte/gas/Gasverbrauch.pdf)
 CSP: [MDN connect-src](https://developer.mozilla.org/docs/Web/HTTP/Headers/Content-Security-Policy/connect-src)
+Sparrechner-Faustregel 6 %/K: [Utopia (Herleitung ≈ 1/18)](https://utopia.de/ratgeber/raumtemperatur-senken-so-viel-energie-sparst-du-pro-grad_734434) ·
+[Vattenfall](https://www.vattenfall.de/infowelt-energie/energie-sparen/energiespartipps-heizen)

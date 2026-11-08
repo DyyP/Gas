@@ -44,6 +44,15 @@
         <button type="submit">Schlüssel speichern</button>
       </form>
 
+      <div id="meterCard" class="card">
+        <p id="meterLabel" class="kicker">Letzter Stand</p>
+        <div id="odo" class="odo" hidden></div>
+        <p id="lastText" class="big">–</p>
+        <p id="lastSub" class="muted"></p>
+        <div id="meterTiles" class="tiles" hidden></div>
+        <p id="dataAge" class="foot"></p>
+      </div>
+
       <form id="readingForm" class="card" novalidate>
         <h2>Neue Ablesung</h2>
         <label>Datum
@@ -63,51 +72,55 @@
         </div>
         <ul id="queueList" class="list"></ul>
       </div>
-
-      <div class="card">
-        <h2>Letzter Stand</h2>
-        <p id="lastText" class="big">–</p>
-        <p id="lastSub" class="muted"></p>
-        <p id="dataAge" class="muted small-text"></p>
-      </div>
     </section>
 
-    <!-- Auswertung -->
-    <section id="view-auswertung" class="view" aria-labelledby="tab-auswertung" hidden>
+    <!-- Prognose -->
+    <section id="view-prognose" class="view" aria-labelledby="tab-prognose" hidden>
       <div class="card">
         <h2>Prognose-Grundlage</h2>
         <p id="ratingText" class="rating">–</p>
         <dl id="modelFacts" class="facts" hidden></dl>
       </div>
-      <div class="card">
-        <h2>Abrechnungszeiträume</h2>
-        <div id="periodList" class="periods"></div>
-        <p id="periodEmpty" class="muted" hidden>Noch keine Periode – im Sheet im Tab „Perioden“ anlegen.</p>
-      </div>
-      <div class="card">
-        <h2>Monate</h2>
-        <p class="muted small-text">Heizgradtage (HGT) im Vergleich zum Mittel seit 2020. * = Monat nur teilweise abgelesen.</p>
-        <div class="table-wrap">
-          <table id="monthTable">
-            <thead><tr><th scope="col">Monat</th><th scope="col">HGT</th><th scope="col">Normal</th><th scope="col">m³</th><th scope="col">kWh</th><th scope="col">Kosten</th></tr></thead>
-            <tbody id="monthRows"></tbody>
-          </table>
-        </div>
-        <p id="monthEmpty" class="muted" hidden>Noch keine Monatswerte.</p>
-      </div>
-      <div class="card">
-        <h2>Zeiträume zwischen Ablesungen</h2>
-        <div class="table-wrap">
-          <table id="intervalTable">
-            <thead><tr><th scope="col">Zeitraum</th><th scope="col">Tage</th><th scope="col">m³</th><th scope="col">m³/Tag</th><th scope="col">kWh/Tag</th></tr></thead>
-            <tbody id="intervalRows"></tbody>
-          </table>
-        </div>
-        <p id="intervalEmpty" class="muted" hidden>Noch keine zwei Ablesungen – Zeiträume erscheinen ab der zweiten.</p>
-      </div>
+      <div id="periodList" class="periods"></div>
+      <p id="periodEmpty" class="card muted" hidden>Noch keine Periode – im Sheet im Tab „Perioden“ anlegen.</p>
       <div id="hintsCard" class="card" hidden>
         <h2>Hinweise</h2>
         <ul id="hintsList" class="list"></ul>
+      </div>
+    </section>
+
+    <!-- Analyse -->
+    <section id="view-analyse" class="view" aria-labelledby="tab-analyse" hidden>
+      <p id="analyseEmpty" class="card muted" hidden>Für die Analyse braucht es Wetterdaten und mindestens drei Ablesezeiträume.</p>
+      <div id="aHeat" class="card" hidden></div>
+      <div id="aMonths" class="card" hidden></div>
+      <div id="aDayCost" class="card" hidden></div>
+      <div id="aCalendar" class="card" hidden></div>
+      <div id="aSeason" class="card" hidden></div>
+      <div class="card">
+        <p class="kicker">Daten</p>
+        <h2 class="title">Tabellen</h2>
+        <details class="table">
+          <summary>Monate</summary>
+          <div class="table-wrap">
+            <table id="monthTable">
+              <thead><tr><th scope="col">Monat</th><th scope="col">kWh</th><th scope="col" title="bei normalem Wetter">Normal</th><th scope="col">m³</th><th scope="col" title="Heizgradtage">HGT</th><th scope="col">Kosten</th></tr></thead>
+              <tbody id="monthRows"></tbody>
+            </table>
+          </div>
+          <p id="monthEmpty" class="muted" hidden>Noch keine Monatswerte.</p>
+          <p class="foot">* Monat unvollständig · Normal = kWh bei normalem Wetter · HGT = Heizgradtage</p>
+        </details>
+        <details class="table">
+          <summary>Zeiträume zwischen Ablesungen</summary>
+          <div class="table-wrap">
+            <table id="intervalTable">
+              <thead><tr><th scope="col">Zeitraum</th><th scope="col">Tage</th><th scope="col">m³</th><th scope="col">m³/Tag</th><th scope="col">kWh/Tag</th></tr></thead>
+              <tbody id="intervalRows"></tbody>
+            </table>
+          </div>
+          <p id="intervalEmpty" class="muted" hidden>Noch keine zwei Ablesungen – Zeiträume erscheinen ab der zweiten.</p>
+        </details>
       </div>
     </section>
 
@@ -137,9 +150,14 @@
   </main>
 
   <nav class="tabs" aria-label="Ansichten">
-    <a id="tab-erfassen" href="#erfassen" class="tab">Erfassen</a>
-    <a id="tab-auswertung" href="#auswertung" class="tab">Auswertung</a>
-    <a id="tab-einstellungen" href="#einstellungen" class="tab">Einstellungen</a>
+    <a id="tab-erfassen" href="#erfassen" class="tab">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Erfassen</a>
+    <a id="tab-prognose" href="#prognose" class="tab">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>Prognose</a>
+    <a id="tab-analyse" href="#analyse" class="tab">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11M12 20V5M19 20v-6"/></svg>Analyse</a>
+    <a id="tab-einstellungen" href="#einstellungen" class="tab">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Einstellungen</a>
   </nav>
 
   <dialog id="confirmDialog" aria-labelledby="confirmTitle">

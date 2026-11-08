@@ -1,5 +1,5 @@
-// Diagramme als SVG – ohne Bibliothek (offline, strenge CSP). Farben kommen aus CSS-Variablen.
-//   deine Daten: hell (--data) · Kontext: grau (--context) · gut/schlecht: Grün/Weinrot (nur mit Wort + Pfeil)
+// Diagramme als SVG – ohne Bibliothek (offline, strenge CSP). Farben kommen aus CSS-Klassen.
+//   Gas/Kosten: Bernstein · Kälte: Blau · Kontext: Grau · gut/schlecht: Grün/Koralle (nur mit Wort + Pfeil)
 import { formatNumber, formatDate, dayNumber } from './format.js';
 
 const isoOf = n => new Date(n * 86400000).toISOString().slice(0, 10);
@@ -7,14 +7,14 @@ const isoOf = n => new Date(n * 86400000).toISOString().slice(0, 10);
 const NS = 'http://www.w3.org/2000/svg';
 const MONTH_LETTER = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 
-function svg(tag, attrs = {}, ...children) {
+export function svg(tag, attrs = {}, ...children) {
   const n = document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
   n.append(...children);
   return n;
 }
 
-function html(tag, cls, text) {
+export function html(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== undefined) n.textContent = text;
@@ -25,6 +25,76 @@ const euro = x => `${formatNumber(Math.round(Math.abs(x)), 0)} €`;
 const path = pts => pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('');
 
 let gradientId = 0;
+/** Eindeutige Kennung für Verläufe/Muster (mehrere Diagramme auf einer Seite). */
+export const uid = () => `g${++gradientId}`;
+
+// Höchstens ein Tooltip gleichzeitig; Tippen außerhalb schließt ihn (auf dem iPhone gibt es kein „Maus weg“).
+let activeHide = null;
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerdown', e => {
+    if (activeHide && !activeHide.owns(e.target)) activeHide();
+  }, true);
+}
+function activate(hide) {
+  if (activeHide && activeHide !== hide) activeHide();
+  activeHide = hide;
+}
+
+/**
+ * Tooltip für ein Diagramm: pick(x, y) in SVG-Koordinaten → { x, y, lines, ring?, box?, cross? } oder null.
+ * ring: Radius eines Hervorhebungskreises · box: {x, y, w, h} · cross: senkrechte Linie {y1, y2}.
+ */
+export function attachTip(wrap, root, W, H, pick) {
+  const tip = html('div', 'chart-tip');
+  tip.hidden = true;
+  const ring = svg('circle', { class: 'hl', r: 6, visibility: 'hidden' });
+  const box = svg('rect', { class: 'hl', rx: 2, visibility: 'hidden' });
+  const cross = svg('line', { class: 'cross', visibility: 'hidden' });
+  root.append(cross, ring, box);
+  wrap.append(tip);
+  const marks = [ring, box, cross];
+  const hide = () => {
+    tip.hidden = true;
+    for (const m of marks) m.setAttribute('visibility', 'hidden');
+    if (activeHide === hide) activeHide = null;
+  };
+  hide.owns = t => root.contains(t);
+  const show = evt => {
+    const b = root.getBoundingClientRect();
+    const hit = pick(((evt.clientX - b.left) / b.width) * W, ((evt.clientY - b.top) / b.height) * H);
+    if (!hit) return hide();
+    activate(hide);
+    for (const m of marks) m.setAttribute('visibility', 'hidden');
+    if (hit.ring) {
+      ring.setAttribute('cx', hit.x);
+      ring.setAttribute('cy', hit.y);
+      ring.setAttribute('r', hit.ring);
+      ring.setAttribute('visibility', 'visible');
+    }
+    if (hit.box) {
+      for (const [k, v] of [['x', hit.box.x], ['y', hit.box.y], ['width', hit.box.w], ['height', hit.box.h]]) box.setAttribute(k, v);
+      box.setAttribute('visibility', 'visible');
+    }
+    if (hit.cross) {
+      for (const [k, v] of [['x1', hit.x], ['x2', hit.x], ['y1', hit.cross.y1], ['y2', hit.cross.y2]]) cross.setAttribute(k, v);
+      cross.setAttribute('visibility', 'visible');
+    }
+    tip.replaceChildren(...hit.lines.filter(Boolean).map(t => html('p', '', t)));
+    tip.hidden = false;
+    const wb = wrap.getBoundingClientRect();
+    const sx = b.left - wb.left + (hit.x / W) * b.width;
+    const sy = b.top - wb.top + (hit.y / H) * b.height;
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    tip.style.left = `${Math.max(0, Math.min(wb.width - tw, sx - tw / 2))}px`;
+    tip.style.top = `${sy - th - 14 >= 0 ? sy - th - 14 : sy + 16}px`;
+  };
+  root.addEventListener('pointermove', show);
+  root.addEventListener('pointerdown', show);
+  root.addEventListener('pointerleave', e => {
+    if (e.pointerType === 'mouse') hide();
+  });
+}
 
 /**
  * Prognose-Karte einer Periode: Ist-Kosten (Linie + Fläche), Prognose (gestrichelt) mit 80-%-Band,
@@ -83,7 +153,7 @@ export function periodChart(p) {
     ) * 1.04;
   const y = v => H - padB - (v / yMax) * (H - padB - TOP);
 
-  const gid = `g${++gradientId}`;
+  const gid = uid();
   const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'pchart-svg', role: 'img', 'aria-label': ariaText(p) });
   root.append(
     svg('defs', {},
@@ -173,7 +243,15 @@ export function periodChart(p) {
     ...traj.slice(f.actual.length ? 1 : 0).map(t => ({ date: t.date, kind: 'prognose', v: t.p50, lo: t.p10, hi: t.p90 })),
   ];
   const paidAt = iso => steps.filter(s => s.date <= iso).reduce((m, s) => s.sum, 0);
+  const hide = () => {
+    tip.hidden = true;
+    wrap.classList.remove('tipping');
+    cross.setAttribute('visibility', 'hidden');
+    if (activeHide === hide) activeHide = null;
+  };
+  hide.owns = t => root.contains(t);
   const show = evt => {
+    activate(hide);
     const box = root.getBoundingClientRect();
     const px = ((evt.clientX - box.left) / box.width) * W;
     let best = null;
@@ -194,10 +272,8 @@ export function periodChart(p) {
   };
   root.addEventListener('pointermove', show);
   root.addEventListener('pointerdown', show);
-  root.addEventListener('pointerleave', () => {
-    tip.hidden = true;
-    wrap.classList.remove('tipping');
-    cross.setAttribute('visibility', 'hidden');
+  root.addEventListener('pointerleave', e => {
+    if (e.pointerType === 'mouse') hide();
   });
 
   wrap.append(root, tip, legend(running, !!recSteps));
@@ -229,7 +305,7 @@ function bandShort(lo, hi) {
   return `${n(lo)} € Guthaben bis ${n(hi)} € Nachzahlung`;
 }
 
-function niceStep(v) {
+export function niceStep(v) {
   const p = Math.pow(10, Math.floor(Math.log10(Math.max(v, 1))));
   for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
   return 10 * p;

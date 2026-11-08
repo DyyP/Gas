@@ -1,7 +1,7 @@
 // Service Worker – nur für die App-Hülle (damit die App auch ohne Netz öffnet).
 // Strategie: Netz zuerst (mit kurzer Wartezeit, Revalidierung statt HTTP-Cache), sonst Cache.
 // Anfragen an Google (API) fasst er nicht an.
-const VERSION = '1.1.0-m3'; // = APP_VERSION in js/version.js (wird getestet)
+const VERSION = '1.2.0-m4'; // = APP_VERSION in js/version.js (wird getestet)
 const CACHE = `gas-shell-${VERSION}`;
 const SHELL = [
   './',
@@ -18,6 +18,7 @@ const SHELL = [
   './js/queue.js',
   './js/render.js',
   './js/charts.js',
+  './js/analyse.js',
   './icons/apple-touch-icon.png',
   './icons/icon-192.png',
   './icons/icon-512.png',

@@ -199,6 +199,8 @@ function computeAll_(input) {
       hgt: dd.hgt,
       g: dd.g,
       hgtNormal: normals[iso.slice(5)] === undefined ? null : normals[iso.slice(5)],
+      // Erwarteter Verbrauch bei normalem Wetter (Modell × Normal-HGT) – für „Wetter oder du?“
+      kWhNormal: model && normals[iso.slice(5)] !== undefined ? (model.b + model.a * normals[iso.slice(5)]) * conv.factor : null,
       m3: m3,
       kWh: kWh,
       factor: conv.factor,
@@ -242,7 +244,7 @@ function aggregateMonths_(days) {
   for (const d of days) {
     const k = d.date.slice(0, 7);
     if (!map[k]) {
-      map[k] = { month: k, days: 0, hgt: 0, hgtNormal: 0, normalOk: true, m3: 0, kWh: 0, cost: 0, covered: 0, costOk: true };
+      map[k] = { month: k, days: 0, hgt: 0, hgtNormal: 0, normalOk: true, m3: 0, kWh: 0, kWhNormal: 0, kWhNormalOk: true, cost: 0, covered: 0, costOk: true };
       order.push(k);
     }
     const m = map[k];
@@ -252,6 +254,8 @@ function aggregateMonths_(days) {
     else m.hgtNormal += d.hgtNormal;
     m.m3 += d.m3 || 0;
     m.kWh += d.kWh || 0;
+    if (d.kWhNormal === null || d.kWhNormal === undefined) m.kWhNormalOk = false;
+    else m.kWhNormal += d.kWhNormal;
     m.covered += d.covered;
     if (d.costBase === null || (d.covered > 0 && d.costWork === null)) m.costOk = false;
     m.cost += (d.costWork || 0) + (d.costBase || 0);
@@ -265,6 +269,7 @@ function aggregateMonths_(days) {
       hgtNormal: m.normalOk ? round_(m.hgtNormal, 1) : null,
       m3: round_(m.m3, 3),
       kWh: round_(m.kWh, 1),
+      kWhNormal: m.kWhNormalOk ? round_(m.kWhNormal, 1) : null,
       cost: m.costOk ? round_(m.cost, 2) : null,
       coverage: round_(m.covered / m.days, 3),
     };

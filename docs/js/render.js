@@ -28,6 +28,51 @@ export function renderLast(dom, overview, pending, today) {
   dom.dataAge.textContent = overview ? `Datenstand: ${formatDateTime(overview.generatedAt)}` : '';
 }
 
+const hoursAgo = h => (h < 1 ? 'vor weniger als 1 Std.' : h < 36 ? `vor ${Math.round(h)} Std.` : `vor ${Math.round(h / 24)} Tagen`);
+const tempText = t => `${t < 0 ? '−' : ''}${formatNumber(Math.abs(t), 1)}\u00a0°C`;
+
+/**
+ * Live-Zähler: geschätzter Stand jetzt = Schätzung des Servers + Verbrauch seit dem Datenstand (heutige Rate).
+ * Ohne Modell oder mit neuerer, noch nicht gesendeter Ablesung: letzter Stand wie bisher.
+ */
+export function renderMeter(dom, overview, pending, today, nowMs = Date.now()) {
+  const e = overview && overview.insights && overview.insights.estimate;
+  const last = overview && overview.last;
+  const generated = overview ? Date.parse(overview.generatedAt) : NaN;
+  if (!e || (pending && (!last || pending.newer)) || !Number.isFinite(generated)) {
+    dom.meterLabel.textContent = 'Letzter Stand';
+    dom.odo.hidden = true;
+    dom.meterTiles.hidden = true;
+    dom.lastText.hidden = false;
+    renderLast(dom, overview, pending, today);
+    return;
+  }
+  const ageH = Math.max(0, (nowMs - generated) / 3600000);
+  const value = e.value + (e.m3PerDay * Math.min(ageH, 7 * 24)) / 24;
+  const [int, dec] = value.toFixed(3).split('.');
+  dom.meterLabel.textContent = 'Zähler jetzt · geschätzt';
+  dom.odo.replaceChildren(
+    ...int.padStart(5, '0').split('').map(d => el('span', { text: d })),
+    el('span', { class: 'sep', text: ',' }),
+    ...dec.split('').map(d => el('span', { class: 'dec', text: d })),
+    el('span', { class: 'unit', text: 'm³' })
+  );
+  dom.odo.setAttribute('role', 'img');
+  dom.odo.setAttribute('aria-label', `geschätzt ${formatNumber(value, 3)} m³`);
+  dom.odo.hidden = false;
+  dom.lastText.hidden = true;
+  const when = `${formatDate(e.since)}${e.sinceTime ? `, ${e.sinceTime} Uhr` : ''}`;
+  dom.lastSub.textContent = `± ${formatNumber(e.sd, 1)} m³ · zuletzt abgelesen ${when} (${hoursAgo(e.hours + ageH)}): ${formatNumber(e.lastValue, 3)} m³`;
+  const tariff = overview.insights.tariffNow;
+  const tile = (cls, value, label) => el('div', { class: `tile ${cls}`.trim() }, el('b', { text: value }), el('small', { text: label }));
+  dom.meterTiles.replaceChildren(
+    tile('gas', `${formatNumber(e.m3PerDay, 1)} m³`, `pro Tag bei ${tempText(e.tmToday)}`),
+    tile('', e.eurPerDay === null ? '–' : formatEuro(e.eurPerDay), `pro Tag${tariff && tariff.name ? ` (${tariff.name})` : ''}`)
+  );
+  dom.meterTiles.hidden = false;
+  dom.dataAge.textContent = `Datenstand: ${formatDateTime(overview.generatedAt)}`;
+}
+
 export function renderIntervals(tbody, empty, intervals) {
   tbody.replaceChildren();
   empty.hidden = intervals.length > 0;
@@ -171,10 +216,10 @@ export function renderMonths(tbody, empty, months) {
         'tr',
         {},
         el('td', { text: `${formatMonth(m.month)}${m.coverage < 0.999 ? ' *' : ''}` }),
-        el('td', { text: formatNumber(m.hgt, 0) }),
-        el('td', { text: m.hgtNormal === null ? '–' : formatNumber(m.hgtNormal, 0) }),
-        el('td', { text: formatNumber(m.m3, 1) }),
         el('td', { text: formatNumber(m.kWh, 0) }),
+        el('td', { text: typeof m.kWhNormal === 'number' ? formatNumber(m.kWhNormal, 0) : '–' }),
+        el('td', { text: formatNumber(m.m3, 1) }),
+        el('td', { text: formatNumber(m.hgt, 0) }),
         el('td', { text: m.cost === null ? '–' : formatEuro(m.cost) })
       )
     )

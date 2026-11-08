@@ -6,7 +6,8 @@ import { createApi, NetworkError } from './api.js';
 import { createQueue } from './queue.js';
 import { checkReading, latestKnown } from './plausi.js';
 import { parseReading, localIsoDate, localTime, readingT, formatDate } from './format.js';
-import { renderLast, renderIntervals, renderHints, renderQueue, renderPeriods, renderMonths, renderModel } from './render.js';
+import { renderMeter, renderIntervals, renderHints, renderQueue, renderPeriods, renderMonths, renderModel } from './render.js';
+import { renderAnalyse } from './analyse.js';
 
 const $ = id => document.getElementById(id);
 const dom = Object.fromEntries(
@@ -15,7 +16,8 @@ const dom = Object.fromEntries(
     'saveBtn', 'msg', 'queueCard', 'queueTitle', 'flushBtn', 'queueList', 'lastText', 'lastSub', 'dataAge', 'intervalRows',
     'intervalEmpty', 'hintsCard', 'hintsList', 'keyState', 'serverState', 'testBtn', 'changeKeyBtn', 'testMsg', 'appVersion',
     'confirmDialog', 'confirmText', 'confirmOk', 'confirmCancel', 'periodList', 'periodEmpty', 'monthRows', 'monthEmpty',
-    'weatherState', 'ratingText', 'modelFacts',
+    'weatherState', 'ratingText', 'modelFacts', 'meterLabel', 'odo', 'meterTiles', 'analyseEmpty', 'aHeat', 'aMonths', 'aDayCost',
+    'aCalendar', 'aSeason',
   ].map(id => [id, $(id)])
 );
 
@@ -29,7 +31,7 @@ let lastSync = 0;
 let syncing = null;
 
 const today = () => localIsoDate();
-const MIN_SCHEMA = 3; // Server-Schema, das diese App-Version erwartet
+const MIN_SCHEMA = 4; // Server-Schema, das diese App-Version erwartet
 const AUTH_TEXT = 'Der Schlüssel ist falsch oder wurde geändert.';
 
 function hostOf(url) {
@@ -85,7 +87,7 @@ function renderAll() {
     },
     dismiss: id => queue.dismiss(id),
   });
-  renderLast(dom, overview, newestPending(entries), today());
+  renderMeter(dom, overview, newestPending(entries), today());
   renderIntervals(dom.intervalRows, dom.intervalEmpty, overview ? overview.intervals : []);
   // Server-Skript älter als die App (Update im Sheet vergessen oder keine neue Version bereitgestellt)?
   const serverOld = !!overview && (overview.schema || 0) < MIN_SCHEMA;
@@ -96,7 +98,8 @@ function renderAll() {
   renderModel(dom.ratingText, dom.modelFacts, overview && overview.model, overview && overview.rating);
   renderPeriods(dom.periodList, dom.periodEmpty, (overview && overview.periods) || []);
   renderMonths(dom.monthRows, dom.monthEmpty, (overview && overview.months) || []);
-  if (serverOld) dom.periodEmpty.textContent = dom.monthEmpty.textContent = oldText;
+  renderAnalyse(dom, serverOld ? null : overview);
+  if (serverOld) dom.periodEmpty.textContent = dom.monthEmpty.textContent = dom.analyseEmpty.textContent = oldText;
   const w = overview && overview.weather;
   dom.weatherState.textContent = w && w.last ? `DWD-Station ${w.station}, Werte bis ${formatDate(w.last)} – Quelle: Deutscher Wetterdienst` : 'noch keine Daten';
   const key = getKey();
@@ -246,10 +249,11 @@ dom.testBtn.addEventListener('click', async () => {
   setMsg(dom.testMsg, err.message + check, 'error');
 });
 
-// Ansichten über den Hash (#erfassen, #auswertung, #einstellungen)
-const VIEWS = ['erfassen', 'auswertung', 'einstellungen'];
+// Ansichten über den Hash (#erfassen, #prognose, #analyse, #einstellungen); alte Lesezeichen #auswertung → Prognose
+const VIEWS = ['erfassen', 'prognose', 'analyse', 'einstellungen'];
 function route() {
-  const name = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'erfassen';
+  const hash = location.hash.slice(1) === 'auswertung' ? 'prognose' : location.hash.slice(1);
+  const name = VIEWS.includes(hash) ? hash : 'erfassen';
   for (const v of VIEWS) {
     $(`view-${v}`).hidden = v !== name;
     const tab = $(`tab-${v}`);
@@ -257,7 +261,15 @@ function route() {
     else tab.removeAttribute('aria-current');
   }
 }
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => {
+  route();
+  window.scrollTo(0, 0);
+});
+
+// Live-Zähler: alle 10 s weiterzählen, solange die App sichtbar ist
+setInterval(() => {
+  if (document.visibilityState === 'visible' && !dom.odo.hidden) renderMeter(dom, overview, newestPending(queue.entries()), today());
+}, 10000);
 
 // Wieder sichtbar (iOS friert Home-Bildschirm-Apps oft nur ein): Datum aktualisieren, Daten holen.
 function onResume() {
