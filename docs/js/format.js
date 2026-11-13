@@ -73,3 +73,21 @@ export function formatMonth(ym) {
 
 /** Euro mit zwei Nachkommastellen: 154.32 → „154,32 €“ */
 export const formatEuro = x => `${formatNumber(x, 2)} €`;
+
+export const isoOfDay = n => new Date(n * 86400000).toISOString().slice(0, 10);
+
+/** Kompakte Tagesspalten des Servers ({ start, m3: [], kWh: [], tm: [], covered: [] }) → [{ date, m3, kWh, tm, covered }]. */
+export function expandDays(cols) {
+  if (!cols || !Array.isArray(cols.kWh)) return [];
+  const n0 = dayNumber(cols.start);
+  return cols.kWh.map((kWh, i) => ({ date: isoOfDay(n0 + i), m3: cols.m3[i], kWh, tm: cols.tm[i], covered: cols.covered[i] }));
+}
+
+/** ISO-Kalenderwoche eines Datums (Woche mit dem ersten Donnerstag = KW 1). */
+export function isoWeek(iso) {
+  const n = dayNumber(iso);
+  const dow = (new Date(n * 86400000).getUTCDay() + 6) % 7; // Mo = 0
+  const thursday = n - dow + 3; // die Woche gehört zum Jahr ihres Donnerstags
+  const jan1 = dayNumber(`${isoOfDay(thursday).slice(0, 4)}-01-01`);
+  return 1 + Math.floor((thursday - jan1) / 7);
+}

@@ -28,7 +28,26 @@ after(async () => {
 
 /** Simulierter Server mit echten Regeln (vereinfacht): Schlüssel, Duplikate per ID, Plausibilität. */
 function mockServer() {
-  const m = { offline: false, readings: [], calls: [], forceError: null, estimate: false };
+  const m = { offline: false, readings: [], calls: [], forceError: null, estimate: false, constDays: false };
+  // Tageswerte der letzten 800 Tage bis heute; die letzten 3 Tage ohne Ablesung. Temperatur jahreszeitlich.
+  m.days = () => {
+    const n = 800;
+    const now = Date.now();
+    const start = new Date(now - (n - 1) * 864e5).toISOString().slice(0, 10);
+    const cols = { start, m3: [], kWh: [], tm: [], covered: [] };
+    for (let i = 0; i < n; i++) {
+      const date = new Date(now - (n - 1 - i) * 864e5);
+      const doy = (date - Date.UTC(date.getUTCFullYear(), 0, 1)) / 864e5;
+      const tm = Math.round((10 - 9 * Math.cos((2 * Math.PI * (doy - 15)) / 365)) * 10) / 10;
+      const open = i >= n - 3;
+      const kWh = open ? null : m.constDays ? 10.8 : Math.round(Math.max(0, 12.5 - tm) * 3.855 * 100) / 100;
+      cols.m3.push(open ? null : Math.round((kWh / 10.8) * 1000) / 1000);
+      cols.kWh.push(kWh);
+      cols.tm.push(tm);
+      cols.covered.push(open ? 0 : 1);
+    }
+    return cols;
+  };
   m.overview = () => {
     const sorted = m.readings.slice().sort((a, b) => (a.date < b.date ? -1 : 1));
     const last = sorted.at(-1) || null;
@@ -41,7 +60,7 @@ function mockServer() {
       intervals.unshift({ from: a.date, to: b.date, days, m3, m3PerDay: m3 / days, kWh: m3 * 10.8, kWhPerDay: (m3 * 10.8) / days, meter: '', excluded: false, conversion: 'Platzhalter', tmean: 12.5 - (m3 * 10.8) / days / 3.855 });
     }
     return {
-      generatedAt: new Date().toISOString(), today: new Date().toISOString().slice(0, 10), api: 1, schema: 4,
+      generatedAt: new Date().toISOString(), today: new Date().toISOString().slice(0, 10), api: 1, schema: 5,
       settings: { minDate: '2025-11-01', maxPerDay: 20, meter: '' },
       last: last && { date: last.date, time: last.time, value: last.value, meter: '' },
       readingsCount: m.readings.length, intervals,
@@ -65,6 +84,10 @@ function mockServer() {
             measuredUntil: '2026-11-07', actual: [{ date: '2026-11-01', cost: 2 }, { date: '2026-11-07', cost: 16.47 }],
             trajectory: [{ date: '2026-11-07', p10: 16.4, p50: 16.5, p90: 16.6 }, { date: '2027-01-31', p10: 250, p50: 290, p90: 330 }, { date: '2027-10-31', p10: 709.28, p50: 791.26, p90: 932.59 }],
             paymentSteps: Array.from({ length: 12 }, (_, i) => ({ date: new Date(Date.UTC(2026, 10 + i, 1)).toISOString().slice(0, 10), sum: 30 * (i + 1) })) },
+          forecastSeason: { kWh: { p10: 1440, p50: 2112, p80: 2600, p90: 2859 }, cost: { p10: 382, p50: 476, p80: 540, p90: 582 }, balance: { p10: 21.56, p50: 116.37, p80: 180, p90: 221.7 }, paymentsTotal: 360, paymentsCount: 12, measuredShare: 0.04, unknownDays: 357.5, climateYears: 6, mainUncertainty: 'Modell', recommendation: { remaining: 11, current: 30, balanced: 41, safe: 47 },
+            measuredUntil: '2026-11-07', actual: [{ date: '2026-11-01', cost: 2 }, { date: '2026-11-07', cost: 16.47 }],
+            trajectory: [{ date: '2026-11-07', p10: 16.4, p50: 16.5, p90: 16.6 }, { date: '2027-01-31', p10: 150, p50: 190, p90: 230 }, { date: '2027-10-31', p10: 382, p50: 476, p90: 582 }],
+            paymentSteps: Array.from({ length: 12 }, (_, i) => ({ date: new Date(Date.UTC(2026, 10 + i, 1)).toISOString().slice(0, 10), sum: 30 * (i + 1) })) },
         },
       ],
       weather: { last: '2026-11-07', station: '05906' },
@@ -74,10 +97,8 @@ function mockServer() {
       insights: {
         tariffNow: { ap: 14.1, gp: 14.88, name: 'MVV', basePerDay: 0.4892 },
         factorNow: 10.848,
-        daily: Array.from({ length: 60 }, (_, i) => ({
-          date: new Date(Date.now() - (59 - i) * 864e5).toISOString().slice(0, 10),
-          kWh: i < 5 ? null : 10 + (i % 7) * 4, tm: 5 - (i % 7), covered: i < 5 ? 0 : 1,
-        })),
+        days: m.days(),
+        level: { source: 'Faktor', factor: 0.468, theta: 12.5, a: 0.1664, aKWh: 1.806, b: 0, n: 5, from: '2026-08-01', to: '2026-11-08', expectedKWh: 342, actualKWh: 160 },
         ...(m.estimate && last
           ? { estimate: { since: last.date, sinceTime: last.time, hours: 8, lastValue: last.value, m3: 1.066, sd: 0.799, value: last.value + 1.066, tmToday: 3.5, m3PerDay: 3.198, kWhPerDay: 34.7, eurPerDay: 5.38 } }
           : {}),
@@ -296,7 +317,7 @@ test('Live-Zähler: geschätzter Stand jetzt mit Zählwerk, Unsicherheit und Kos
   await context.close();
 });
 
-test('Analyse: alle fünf Karten, Tabellen aufklappbar, Tooltip per Tippen', async () => {
+test('Analyse: vier Karten in neuer Reihenfolge, Heizkalender mit Vergleich, Tabellen, Tooltip per Tippen', async () => {
   const { context, page, mock, problems } = await openApp();
   mock.estimate = true;
   [['2025-11-01', 1865], ['2025-11-03', 1879], ['2025-11-10', 1910], ['2025-11-20', 1950], ['2025-12-01', 2010]].forEach(([date, value], i) =>
@@ -305,30 +326,48 @@ test('Analyse: alle fünf Karten, Tabellen aufklappbar, Tooltip per Tippen', asy
   await page.reload(); // nur der Hash hat sich geändert – neu laden holt die Ablesungen
   await page.locator('#view-prognose').waitFor();
   await page.click('#tab-analyse');
-  for (const id of ['aHeat', 'aMonths', 'aDayCost', 'aCalendar', 'aSeason']) await page.locator(`#${id}`).waitFor();
+  for (const id of ['aMonths', 'aCalendar', 'aDayCost', 'aSeason']) await page.locator(`#${id}`).waitFor();
   assert.equal(await page.isVisible('#analyseEmpty'), false);
-  // Reihenfolge wie gewünscht: Heizkurve, Monate, Tageskosten, Kalender, Saison
+  // Reihenfolge wie gewünscht; die Heizkurve gibt es nicht mehr
   const order = await page.$$eval('#view-analyse > .card:not([hidden])', n => n.map(x => x.id).filter(Boolean));
-  assert.deepEqual(order, ['aHeat', 'aMonths', 'aDayCost', 'aCalendar', 'aSeason']);
-  assert.equal(await page.locator('#aHeat circle.pt').count(), 4);
-  assert.match(await text(page, '#aHeat'), /Je Grad kälter brauchst du 3,9 kWh mehr am Tag \(≈ 0,54 €\)/);
-  // Monate je Heizjahr: laufendes zuerst (Nov. gemessen, Dez.–Jul. noch offen), Umschalten aufs Vorjahr
+  assert.deepEqual(order, ['aMonths', 'aCalendar', 'aDayCost', 'aSeason']);
+  assert.equal(await page.locator('#aHeat').count(), 0);
+  // Monate je Heizjahr
   assert.match(await text(page, '#aMonths'), /Heizjahr 2026\/27 bisher: 88 kWh – ▼ 54 % weniger als bei Normalwetter/);
   assert.equal(await page.locator('#aMonths rect.nbar.open').count(), 6, 'Dez.–Mai als „noch offen“ (Juni/Juli normal 0 → kein Balken)');
   await page.click('#aMonths .seg button >> text=2025/26');
   assert.equal(await page.getAttribute('#aMonths .seg button >> text=2025/26', 'aria-pressed'), 'true');
   assert.match(await text(page, '#aMonths'), /Heizjahr 2025\/26 \(Daten ab Dez\.? 25\): 1\.076 kWh – ▼ 14 % weniger/);
-  assert.equal(await page.locator('#aMonths rect.nbar.open').count(), 0);
-  assert.match(await text(page, '#aDayCost'), /Heute \(3,5\s°C\) kostet ein Tag etwa 5,38 €/);
-  assert.match(await text(page, '#aDayCost'), /▼ 708 kWh.*▼ 100 €/s);
-  assert.equal(await page.locator('#aCalendar rect.today-box').count(), 1);
+  // Heizkalender: aktuelle Saison oben, Vergleich darunter (Auswahl), nur Heizmonate Okt–Mai, gleiche Skala
+  const today = new Date().toISOString().slice(0, 10);
+  const cur = Number(today.slice(5, 7)) >= 8 ? Number(today.slice(0, 4)) : Number(today.slice(0, 4)) - 1;
+  const label = y => `${y}/${String(y + 1).slice(2)}`;
+  assert.equal(await page.locator('#aCalendar svg').count(), 2, 'zwei Kalender');
+  const cal = await text(page, '#aCalendar');
+  assert.match(cal, new RegExp(`Saison ${label(cur)}`));
+  for (const mo of ['Okt', 'Nov', 'Dez', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai']) assert.ok(cal.includes(mo), mo);
+  for (const mo of ['Jun', 'Jul', 'Aug']) assert.ok(!(await page.locator('#aCalendar svg text', { hasText: new RegExp(`^${mo}$`) }).count()), `${mo} ist kein Heizmonat`);
+  const options = await page.$$eval('#aCalendar select option', o => o.map(x => x.textContent));
+  assert.deepEqual(options, [`Saison ${label(cur - 1)}`, `Saison ${label(cur - 2)}`], 'vergangene Saisons, neueste zuerst');
+  assert.match(cal, new RegExp(`in ${label(cur - 1)} bis zum selben Tag`));
+  await page.selectOption('#aCalendar select', String(cur - 2));
+  assert.match(await text(page, '#aCalendar'), new RegExp(`in ${label(cur - 2)} bis zum selben Tag`));
+  assert.equal(await page.inputValue('#aCalendar select'), String(cur - 2), 'Auswahl bleibt');
+  assert.equal(await page.locator('#aCalendar rect.today-box').count(), 1, 'heute nur im aktuellen Kalender');
+  // Kosten pro Tag nach dem Heizverhalten dieser Saison
+  const cost = await text(page, '#aDayCost');
+  assert.match(cost, /so wie du diese Saison heizt/);
+  assert.match(cost, /Heute \(3,5\s°C\) kostet ein Tag etwa 5,38 €/);
+  assert.match(cost, /Jedes Grad kälter: \+0,25 € am Tag/);
+  assert.match(cost, /▼ 708 kWh.*▼ 100 €/s);
   assert.match(await text(page, '#aSeason'), /6 %.*160 kWh.*≈ 4\.169 kWh.*am 1\. Januar 40 %, am 1\. April 93 %/s);
-  // Tooltip: Tippen auf einen Punkt der Heizkurve, Tippen daneben schließt
-  const dot = await page.locator('#aHeat circle.pt').first().boundingBox();
-  await page.mouse.click(dot.x + dot.width / 2, dot.y + dot.height / 2);
-  const tip = page.locator('#aHeat .chart-tip');
+  // Tooltip: Tippen auf ein Kästchen im Heizkalender, Tippen daneben schließt
+  await page.locator('#aCalendar svg').first().scrollIntoViewIfNeeded();
+  const box = await page.locator('#aCalendar svg').first().boundingBox();
+  await page.mouse.click(box.x + box.width * 0.3, box.y + 8);
+  const tip = page.locator('#aCalendar .chart-tip').first();
   await tip.waitFor();
-  assert.match(await tip.textContent(), /Tage.*kWh\/Tag.*Modell/s);
+  assert.match(await tip.textContent(), /\d{2}\.\d{2}\.\d{4}/);
   await page.mouse.click(5, 300);
   await tip.waitFor({ state: 'hidden' });
   // Tabellen
@@ -342,6 +381,57 @@ test('Analyse: alle fünf Karten, Tabellen aufklappbar, Tooltip per Tippen', asy
   assert.match(await page.textContent('#intervalRows'), /01\.11\.–03\.11\.2025/);
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '5-analyse.png'), fullPage: true });
   assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test('Rückblick „Letzte 4 Wochen“: Kalenderwochen bis zur letzten Ablesung, Tippen wechselt m³ ↔ kWh (bleibt gemerkt)', async () => {
+  const { context, page, mock, problems } = await openApp();
+  mock.constDays = true; // jeden Tag 1 m³ = 10,8 kWh, die letzten 3 Tage ohne Ablesung
+  mock.readings.push({ id: 'w0000001', date: '2026-10-01', time: null, value: 2300 });
+  await page.reload();
+  await page.locator('#weeksCard').waitFor();
+  const vals = await page.$$eval('#weeksBars .wval', n => n.map(x => x.textContent));
+  assert.equal(vals.length, 4);
+  assert.deepEqual(vals.slice(0, 2), ['7,0', '7,0'], 'volle Wochen: 7 Tage × 1 m³');
+  const kws = await page.$$eval('#weeksBars .wkw', n => n.map(x => x.textContent));
+  assert.ok(kws.every(k => /^KW \d{1,2}$/.test(k)));
+  const lastRead = new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10);
+  const de = iso => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+  assert.match(await page.textContent('#weeksSum'), new RegExp(`m³ · abgelesen bis ${de(lastRead).replace(/\./g, '\\.')}`));
+  await page.click('#weeksCard');
+  assert.deepEqual((await page.$$eval('#weeksBars .wval', n => n.map(x => x.textContent))).slice(0, 2), ['76', '76'], '7 × 10,8 kWh');
+  assert.match(await page.textContent('#weeksSum'), /kWh · abgelesen/);
+  assert.equal(await page.locator('#weeksUnit .on').textContent(), 'kWh');
+  await page.reload();
+  await page.locator('#weeksCard').waitFor();
+  assert.match(await page.textContent('#weeksSum'), /kWh/, 'Einheit gemerkt');
+  // Unter dem Eingabeformular
+  const order = await page.$$eval('#view-erfassen > *', n => n.map(x => x.id).filter(Boolean));
+  assert.ok(order.indexOf('weeksCard') === order.indexOf('readingForm') + 1, order.join(','));
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test('Prognose: Umschalter „Langfristig | Diese Saison“ ändert Zahl, Bereich und Empfehlung und bleibt gemerkt', async () => {
+  const { context, page } = await openApp();
+  await page.click('#tab-prognose');
+  await page.locator('.period-switch').waitFor();
+  let periods = await text(page, '#periodList');
+  assert.match(periods, /Prognose · 31\.10\.2027\s*431 €/);
+  await page.click('.period-switch button >> text=Diese Saison');
+  periods = await text(page, '#periodList');
+  assert.match(periods, /Diese Saison heizt du etwa 53 % weniger als im Jahresmodell/);
+  assert.match(periods, /Faktor aus 5 Ablesezeiträumen seit 01\.08\.2026/);
+  assert.match(periods, /Prognose · 31\.10\.2027\s*116 €\s*▲ Nachzahlung/);
+  assert.match(periods, /80 % sicher: 22–222 €/);
+  assert.match(periods, /Abschlag 41 € statt 30 € pro Monat → etwa ausgeglichen \(mit Puffer: 47 €\)/);
+  assert.equal(await page.locator('.period-switch').count(), 1, 'nur bei der laufenden Periode');
+  await page.reload();
+  await page.locator('.period-switch').waitFor();
+  assert.match(await text(page, '#periodList'), /116 €/, 'Auswahl gemerkt');
+  assert.match(await text(page, '#modelFacts'), /Diese Saison.*1,8 kWh je Heizgradtag.*Faktor 0,47.*5 Zeiträume seit 01\.08\.2026/s);
+  await page.click('.period-switch button >> text=Langfristig');
+  assert.match(await text(page, '#periodList'), /431 €/);
   await context.close();
 });
 

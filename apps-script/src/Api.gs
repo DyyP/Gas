@@ -103,8 +103,8 @@ function addReadingAction_(ss, input) {
 
 /** Erwartung aus dem Modell für einen neuen Zeitraum (nur bei brauchbarem Modell). */
 function modelExpectation_(result) {
-  const m = result.model;
-  if (!m || result.rating.level === 'rot') return null;
+  if (!result.model || result.rating.level === 'rot') return null;
+  const m = result.season || result.model; // so wie du diese Saison heizt
   return (before, r) => {
     const days = pairDays_({ a: before, b: r }, result.temps);
     return days ? predictPair_(m, days, r.t - before.t) : null;

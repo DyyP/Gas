@@ -6,7 +6,7 @@ import { createApi, NetworkError } from './api.js';
 import { createQueue } from './queue.js';
 import { checkReading, latestKnown } from './plausi.js';
 import { parseReading, localIsoDate, localTime, readingT, formatDate } from './format.js';
-import { renderMeter, renderIntervals, renderHints, renderQueue, renderPeriods, renderMonths, renderModel } from './render.js';
+import { renderMeter, renderWeeks, renderIntervals, renderHints, renderQueue, renderPeriods, renderMonths, renderModel } from './render.js';
 import { renderAnalyse } from './diagramme.js'; // nicht „analyse.js“ – den Namen sperren Werbeblocker (EasyPrivacy)
 
 const $ = id => document.getElementById(id);
@@ -16,7 +16,7 @@ const dom = Object.fromEntries(
     'saveBtn', 'msg', 'queueCard', 'queueTitle', 'flushBtn', 'queueList', 'lastText', 'lastSub', 'dataAge', 'intervalRows',
     'intervalEmpty', 'hintsCard', 'hintsList', 'keyState', 'serverState', 'testBtn', 'changeKeyBtn', 'testMsg', 'appVersion',
     'confirmDialog', 'confirmText', 'confirmOk', 'confirmCancel', 'periodList', 'periodEmpty', 'monthRows', 'monthEmpty',
-    'weatherState', 'ratingText', 'modelFacts', 'meterLabel', 'odo', 'meterTiles', 'analyseEmpty', 'aHeat', 'aMonths', 'aDayCost',
+    'weatherState', 'ratingText', 'modelFacts', 'meterLabel', 'odo', 'meterTiles', 'analyseEmpty', 'aMonths', 'aDayCost', 'weeksCard', 'weeksBars', 'weeksSum', 'weeksUnit',
     'aCalendar', 'aSeason',
   ].map(id => [id, $(id)])
 );
@@ -31,7 +31,7 @@ let lastSync = 0;
 let syncing = null;
 
 const today = () => localIsoDate();
-const MIN_SCHEMA = 4; // Server-Schema, das diese App-Version erwartet
+const MIN_SCHEMA = 5; // Server-Schema, das diese App-Version erwartet
 const AUTH_TEXT = 'Der Schlüssel ist falsch oder wurde geändert.';
 
 function hostOf(url) {
@@ -95,8 +95,20 @@ function renderAll() {
   const hints = overview ? overview.hints.slice() : [];
   if (serverOld) hints.unshift({ level: 'warn', text: oldText });
   renderHints(dom.hintsCard, dom.hintsList, hints);
-  renderModel(dom.ratingText, dom.modelFacts, overview && overview.model, overview && overview.rating);
-  renderPeriods(dom.periodList, dom.periodEmpty, (overview && overview.periods) || []);
+  const level = (overview && overview.insights && overview.insights.level) || null;
+  renderModel(dom.ratingText, dom.modelFacts, overview && overview.model, overview && overview.rating, level);
+  renderPeriods(dom.periodList, dom.periodEmpty, (overview && overview.periods) || [], {
+    mode: storage.get('forecastMode', 'long'),
+    level,
+    onMode: m => {
+      storage.set('forecastMode', m);
+      renderAll();
+    },
+  });
+  renderWeeks(dom, serverOld ? null : overview, storage.get('weeksUnit', 'm3'), () => {
+    storage.set('weeksUnit', storage.get('weeksUnit', 'm3') === 'kWh' ? 'm3' : 'kWh');
+    renderAll();
+  });
   renderMonths(dom.monthRows, dom.monthEmpty, (overview && overview.months) || []);
   renderAnalyse(dom, serverOld ? null : overview);
   if (serverOld) dom.periodEmpty.textContent = dom.monthEmpty.textContent = dom.analyseEmpty.textContent = oldText;

@@ -134,3 +134,78 @@ function predictPair_(m, days, d) {
   const varParam = m.cov.aa * h * h + 2 * m.cov.ab * h * d + m.cov.bb * d * d;
   return { mean: mean, sd: Math.sqrt(m.s2 * d + varParam) };
 }
+
+const SEASON_MIN_EXPECTED_M3 = 14; // ≈ 150 kWh Heizbedarf: darunter wäre jede Aussage Zufall
+const SEASON_MIN_DAYS = 28;
+const SEASON_FIT_MIN = 6; // ab so vielen Zeiträumen mit Heizbedarf: eigene Heizgrenze und Steigung
+
+/**
+ * Modell nur aus dieser Heizsaison („wenn du so weiterheizt“): alle Ablesezeiträume, die seit Beginn des Heizjahres
+ * (01.08.) enden – mindestens die der letzten 28 Tage.
+ * - Ab 6 Zeiträumen mit Heizbedarf werden Heizgrenze und Steigung neu geschätzt (wie das Jahresmodell). So wird auch
+ *   ein heruntergedrehtes Thermostat richtig erkannt: Es verschiebt die Heizgrenze, statt jeden Tag gleich viel
+ *   Prozent zu sparen.
+ * - Davor: ein Faktor auf das Jahresmodell (gemessen ÷ erwartet bei echtem Wetter; als Summenverhältnis nach
+ *   Heizbedarf gewichtet), Heizgrenze unverändert, Unsicherheit des Faktors in den Parametern.
+ * factor = Verbrauch im Normaljahr Saisonmodell ÷ Jahresmodell (fairer Vergleich, egal was sich geändert hat).
+ * Rückgabe null (kein Modell / zu wenig Heizbedarf) oder ein Modell wie fitModel_ plus
+ * { source: 'Saison' | 'Faktor', factor, from, to, nSeason, expectedM3, actualM3 }.
+ */
+function seasonModel_(pairs, temps, m, today, settings, normalYearHgt) {
+  if (!m) return null;
+  const used = pairs.filter(p => p.b.exclude !== true);
+  if (!used.length) return null;
+  const lastT = used.reduce((t, p) => Math.max(t, p.b.t), -Infinity);
+  const y = Number(today.slice(5, 7)) >= 8 ? Number(today.slice(0, 4)) : Number(today.slice(0, 4)) - 1;
+  const from = Math.min(dayNumber_(y + '-08-01'), Math.floor(lastT) - SEASON_MIN_DAYS);
+  const rows = [];
+  let to = null;
+  for (const p of used) {
+    if (p.b.t <= from) continue;
+    const days = pairDays_(p, temps);
+    if (!days) continue;
+    rows.push({ p: p, y: p.dv, w: m.a * hgtOf_(days, m.theta) + m.b * (p.b.t - p.a.t) }); // w: Erwartung Jahresmodell
+    if (!to || p.b.date > to) to = p.b.date;
+  }
+  const sumW = rows.reduce((s, r) => s + r.w, 0);
+  const sumY = rows.reduce((s, r) => s + r.y, 0);
+  if (sumW < SEASON_MIN_EXPECTED_M3) return null;
+  const heated = rows.filter(r => r.w > 0.2);
+
+  let sm = null;
+  let source = 'Saison';
+  if (heated.length >= SEASON_FIT_MIN) {
+    sm = fitModel_(rows.map(r => r.p), temps, { Heizgrenze_aus_Daten: settings.Heizgrenze_aus_Daten, Heizgrenze_C: m.theta }, normalYearHgt);
+  }
+  if (!sm) {
+    source = 'Faktor';
+    const k = sumY / sumW;
+    // Unsicherheit: gewichtete Streuung der einzelnen Verhältnisse, mindestens die Modellstreuung (cv) je Zeitraum
+    const sumW2 = heated.reduce((s, r) => s + r.w * r.w, 0);
+    const n = heated.length;
+    const empirical = n >= 3 ? Math.sqrt((heated.reduce((s, r) => s + r.w * r.w * Math.pow(r.y / r.w - k, 2), 0) / (sumW * sumW)) * (n / (n - 1))) : 0;
+    const floor = k * (m.cv || 0.2) * (sumW2 > 0 ? Math.sqrt(sumW2) / sumW : 1);
+    const se = Math.max(empirical, floor, 0.02 * k);
+    sm = scaleModel_(m, k, Number.isFinite(se) ? se : 0.2 * k);
+  }
+  const year = x => x.b * 365 + x.a * normalYearHgt(x.theta);
+  return Object.assign(sm, {
+    source: source,
+    factor: year(m) > 0 ? year(sm) / year(m) : 1,
+    from: isoFromDayNumber_(from),
+    to: to,
+    nSeason: rows.length,
+    expectedM3: sumW,
+    actualM3: sumY,
+  });
+}
+
+/** Jahresmodell mit Faktor k (Heizgrenze und Tagesstreuung gleich); se = Unsicherheit von k → in die Parameter. */
+function scaleModel_(m, k, se) {
+  const s = se || 0;
+  return Object.assign({}, m, {
+    a: m.a * k,
+    b: m.b * k,
+    cov: { aa: m.cov.aa * k * k + Math.pow(m.a * s, 2), ab: m.cov.ab * k * k + m.a * m.b * s * s, bb: m.cov.bb * k * k + Math.pow(m.b * s, 2) },
+  });
+}

@@ -72,7 +72,8 @@ function tmInYear_(weather, y, mmdd) {
 
 /**
  * Prognose für eine Periode. ctx: { days (Tagesrechnung bis heute), model, theta, weather, years [Jahre],
- * normals {MM-TT: HGT}, conversions, placeholder, tariffs, payments, settings, today, u (rel. Umrechnungsunsicherheit) }
+ * normals {MM-TT: HGT bei theta}, conversions, placeholder, tariffs, payments, settings, today, u (rel. Umrechnungsunsicherheit) }
+ * – mit dem Saisonmodell als model/theta/normals ergibt das „wenn du so weiterheizt wie diese Saison“.
  * Rückgabe null, wenn ohne Modell unbekannte Tage bleiben oder ein Tarif fehlt.
  */
 function forecastPeriod_(p, ctx) {
@@ -114,7 +115,7 @@ function forecastPeriod_(p, ctx) {
     acc.costM += (d.m3 || 0) * f * ap;
     const u = 1 - d.covered;
     if (u > 1e-9) {
-      const h = d.hgt !== null ? d.hgt : ctx.normals[d.date.slice(5)] || 0;
+      const h = d.tm !== null && d.tm !== undefined ? Math.max(0, ctx.theta - d.tm) : ctx.normals[d.date.slice(5)] || 0;
       acc.M1 += u;
       acc.MH += u * h;
       acc.K1 += u * f;

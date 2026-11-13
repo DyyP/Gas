@@ -4,11 +4,13 @@
 
 /**
  * r: Ergebnis von computeAll_ · input: dessen Eingaben · nowT: jetzt als gebrochene Tagesnummer (Berlin).
- * Rückgabe { tariffNow, factorNow, daily, estimate?, savings?, season? } – ohne Modell nur die ersten drei.
+ * Rückgabe { tariffNow, factorNow, days, level?, estimate?, savings?, season? } – ohne Modell nur die ersten drei.
+ * Live-Zähler, Sparrechner und „kommt noch“ rechnen mit dem Heizniveau dieser Saison (wenn bekannt).
  */
 function insights_(r, input, nowT) {
   const s = input.settings;
-  const m = r.model;
+  const season = r.season;
+  const m = season || r.model;
   const today = input.today;
   const tariff = validAt_(input.tariffs, today);
   const factor = factorAt_(input.conversions, today, input.placeholder).factor;
@@ -16,12 +18,31 @@ function insights_(r, input, nowT) {
   const out = {
     tariffNow: tariff ? { ap: tariff.ap, gp: tariff.gp, name: tariff.name || '', basePerDay: round_(basePerDay, 4) } : null,
     factorNow: round_(factor, 4),
-    // Heizkalender: die letzten 12 Monate Tag für Tag
-    daily: r.days
-      .filter(d => dayNumber_(today) - dayNumber_(d.date) < 366)
-      .map(d => ({ date: d.date, kWh: d.kWh === null ? null : round_(d.kWh, 2), tm: d.tm, covered: round_(d.covered, 2) })),
+    // Alle Tage seit der ersten Ablesung als Spalten (kompakt) – für Heizkalender und Wochenrückblick
+    days: {
+      start: r.days.length ? r.days[0].date : today,
+      m3: r.days.map(d => (d.m3 === null ? null : round_(d.m3, 3))),
+      kWh: r.days.map(d => (d.kWh === null ? null : round_(d.kWh, 2))),
+      tm: r.days.map(d => (d.tm === null ? null : round_(d.tm, 1))),
+      covered: r.days.map(d => round_(d.covered, 2)),
+    },
   };
   if (!m) return out;
+  if (season) {
+    out.level = {
+      source: season.source,
+      factor: round_(season.factor, 3),
+      theta: season.theta,
+      a: round_(season.a, 4),
+      aKWh: round_(season.a * factor, 3),
+      b: round_(season.b, 3),
+      n: season.nSeason,
+      from: season.from,
+      to: season.to,
+      expectedKWh: round_(season.expectedM3 * factor, 0),
+      actualKWh: round_(season.actualM3 * factor, 0),
+    };
+  }
 
   // Live-Zähler: erwarteter Verbrauch seit der letzten Ablesung bis jetzt
   let last = null;

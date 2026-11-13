@@ -1,6 +1,6 @@
-// Analyse-Seite: Heizkurve, Monate gegen Normalwetter, Kosten pro Tag + Sparrechner, Heizkalender, Heizsaison.
+// Analyse-Seite: Monate gegen Normalwetter, Heizkalender (Saison + Vergleich), Kosten pro Tag + Sparrechner, Heizsaison.
 // SVG ohne Bibliothek. Farben über CSS-Klassen; nur die Glut-Skala des Kalenders setzt Farben als Attribut (CSP-sicher).
-import { formatNumber, formatDate, formatDateShort, formatMonth, formatEuro } from './format.js';
+import { formatNumber, formatDate, formatDateShort, formatMonth, formatEuro, expandDays } from './format.js';
 import { svg, html, niceStep, attachTip, uid } from './charts.js';
 
 const W = 360;
@@ -48,91 +48,13 @@ export function renderAnalyse(dom, o) {
   const ins = o && o.insights;
   const model = (o && o.model) || null;
   const shown = {
-    aHeat: !!ins && heatCurve(dom.aHeat, o.intervals || [], model, ins),
     aMonths: !!ins && monthsCard(dom.aMonths, o.months || [], model, ins.season || null),
+    aCalendar: !!ins && calendarCard(dom.aCalendar, ins),
     aDayCost: !!ins && dayCostCard(dom.aDayCost, model, ins),
-    aCalendar: !!ins && calendarCard(dom.aCalendar, ins.daily || []),
     aSeason: !!ins && seasonCard(dom.aSeason, ins),
   };
   for (const [id, ok] of Object.entries(shown)) dom[id].hidden = !ok;
   dom.analyseEmpty.hidden = Object.values(shown).some(Boolean);
-}
-
-// ---------- 5 · Heizkurve: mittlere Außentemperatur gegen Verbrauch je Tag ----------
-function heatCurve(node, intervals, model, ins) {
-  const pts = intervals.filter(i => typeof i.tmean === 'number' && i.days >= 1);
-  if (pts.length < 3) return false;
-  head(node, 'Heizkurve', 'Kälter heißt mehr Gas', 'Verbrauch in kWh pro Tag gegen die mittlere Außentemperatur – ein Punkt je Zeitraum zwischen zwei Ablesungen.');
-  const H = 230;
-  const L = 28;
-  const R = 10;
-  const T = 12;
-  const B = 24;
-  const bKWh = model ? model.b * ins.factorNow : 0;
-  const f = t => bKWh + model.aKWh * Math.max(0, model.theta - t);
-  const t0 = Math.floor(Math.min(...pts.map(p => p.tmean)) - 1);
-  const t1 = Math.max(Math.ceil(Math.max(...pts.map(p => p.tmean)) + 1), model ? Math.ceil(model.theta + 4) : t0 + 5);
-  const top = Math.max(...pts.map(p => p.kWhPerDay), model ? f(t0) : 0);
-  const step = niceStep(top / 4);
-  const yMax = Math.ceil((top * 1.05) / step) * step;
-  const x = t => L + ((t - t0) / (t1 - t0)) * (W - L - R);
-  const y = v => H - B - (v / yMax) * (H - B - T);
-  const { wrap, root } = chart(H, `Heizkurve: ${pts.length} Zeiträume${model ? `, je Grad kälter ${fmt(model.aKWh, 1)} kWh mehr am Tag` : ''}`);
-  const gid = uid();
-  root.append(svg('defs', {}, grad(gid, [['0%', 'stop-cold', 0.2], ['100%', 'stop-cold', 0.02]], { x1: 0, y1: 0, x2: 1, y2: 0 })));
-  if (model) root.append(svg('rect', { x: L, y: T, width: Math.max(0, x(model.theta) - L), height: H - B - T, fill: `url(#${gid})` }));
-  for (let v = 0; v <= yMax + 1e-9; v += step) {
-    root.append(svg('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: 'grid' }));
-    root.append(svg('text', { x: L - 5, y: y(v) + 3, class: 'axis', 'text-anchor': 'end' }, fmt(v)));
-  }
-  for (let t = Math.ceil(t0 / 5) * 5; t <= t1; t += 5) root.append(svg('text', { x: x(t), y: H - 7, class: 'axis', 'text-anchor': 'middle' }, tick(t)));
-  if (model) {
-    const xt = x(model.theta);
-    root.append(svg('line', { x1: xt, x2: xt, y1: T, y2: H - B, class: 'theta' }));
-    const right = xt + 96 < W - R;
-    root.append(svg('text', { x: right ? xt + 5 : xt - 5, y: T + 10, class: 'lbl-cold', 'text-anchor': right ? 'start' : 'end' }, `Heizgrenze ${temp(model.theta)}`));
-    root.append(svg('path', { d: `M${x(t0)},${y(f(t0))}L${xt},${y(bKWh)}L${x(t1)},${y(bKWh)}`, class: 'model' }));
-    // Steigung beschriften – oberhalb der Linie, wo keine Punkte liegen
-    const tm = t0 + (model.theta - t0) * 0.42;
-    const dx = xt - x(t0);
-    const dy = y(bKWh) - y(f(t0));
-    const len = Math.hypot(dx, dy) || 1;
-    root.append(svg('text', { x: x(tm) + (dy / len) * 26, y: y(f(tm)) - (dx / len) * 26, class: 'lbl-gas' }, `+${fmt(model.aKWh, 1)} kWh je °C kälter`));
-  }
-  const r = p => Math.min(9, Math.max(3, 2 + Math.sqrt(p.days) * 0.8));
-  const order = pts.map((p, i) => ({ p, i })).sort((a, b) => b.p.days - a.p.days);
-  for (const { p, i } of order) {
-    root.append(svg('circle', { cx: x(p.tmean), cy: y(p.kWhPerDay), r: r(p), class: `pt${p.excluded ? ' off' : ''}${i === 0 ? ' new' : ''}` }));
-  }
-  attachTip(wrap, root, W, H, (px, py) => {
-    let best = null;
-    let dist = Infinity;
-    for (const p of pts) {
-      const d = Math.hypot(x(p.tmean) - px, y(p.kWhPerDay) - py);
-      if (d < dist) [best, dist] = [p, d];
-    }
-    if (!best || dist > 30) return null;
-    return {
-      x: x(best.tmean),
-      y: y(best.kWhPerDay),
-      ring: r(best) + 3,
-      lines: [
-        `${formatDateShort(best.from)}–${formatDate(best.to)} · ${fmt(best.days, best.days % 1 ? 1 : 0)} Tage`,
-        `Ø ${temp(best.tmean)} · ${fmt(best.kWhPerDay, 1)} kWh/Tag`,
-        model ? `Modell: ${fmt(f(best.tmean), 1)} kWh/Tag` : null,
-        best.excluded ? 'im Modell ausgeschlossen' : null,
-      ],
-    };
-  });
-  node.append(wrap);
-  const ap = ins.tariffNow && ins.tariffNow.ap;
-  if (model) {
-    node.append(rich('insight', ['Je Grad kälter brauchst du ', [`${fmt(model.aKWh, 1)} kWh`], ' mehr am Tag', ap ? ` (≈ ${formatEuro((model.aKWh * ap) / 100)})` : '', '. Ab ', [temp(model.theta)], ' heizt du praktisch nicht.']));
-  } else {
-    node.append(html('p', 'insight', 'Für die Modelllinie braucht es noch ein paar Ablesungen mehr.'));
-  }
-  node.append(html('p', 'foot', 'Punktgröße = Länge des Zeitraums · weiß umrandet = neuester · Linie = dein Modell · blau = Heizbereich'));
-  return true;
 }
 
 // ---------- 6 · Monate gegen normales Wetter, je Heizjahr (Aug–Jul) ----------
@@ -279,13 +201,15 @@ function legend(items) {
 }
 
 // ---------- 9 · Kosten pro Tag nach Temperatur + Sparrechner ----------
-function dayCostCard(node, model, ins) {
+function dayCostCard(node, model0, ins) {
   const tariff = ins.tariffNow;
-  if (!model || !tariff) return false;
+  if (!model0 || !tariff) return false;
+  // So wie du diese Saison heizt (sonst Jahresmodell)
+  const model = ins.level ? { a: ins.level.a, b: ins.level.b, theta: ins.level.theta } : model0;
   const fac = ins.factorNow;
   const kWh = t => (model.b + model.a * Math.max(0, model.theta - t)) * fac;
   const eur = t => (kWh(t) * tariff.ap) / 100 + tariff.basePerDay;
-  head(node, 'Kosten pro Tag', 'Was ein Tag dich kostet', `Je nach Außentemperatur – Tarif ${tariff.name || 'aktuell'}, inklusive Grundpreis.`);
+  head(node, 'Kosten pro Tag', 'Was ein Tag dich kostet', `Je nach Außentemperatur – Tarif ${tariff.name || 'aktuell'}, inklusive Grundpreis, ${ins.level ? 'so wie du diese Saison heizt' : 'nach deinem Jahresmodell'}.`);
   const H = 190;
   const L = 34;
   const R = 12;
@@ -349,6 +273,8 @@ function dayCostCard(node, model, ins) {
   if (e && typeof e.eurPerDay === 'number') {
     node.append(rich('insight', ['Heute (', temp(e.tmToday), ') kostet ein Tag etwa ', [formatEuro(e.eurPerDay)], '. Bei −5 °C wären es ', [formatEuro(eur(-5))], '.']));
   }
+  const perDegree = (model.a * fac * tariff.ap) / 100;
+  node.append(rich('insight', ['Jedes Grad kälter: ', [`+${formatEuro(perDegree)}`], ` am Tag (${fmt(model.a * fac, 1)} kWh). Ab `, [temp(model.theta)], ' heizt du praktisch nicht.']));
   const s = ins.savings;
   if (s && s.kWh > 0) {
     node.append(html('h3', 'sub-head', 'Sparrechner: 1 °C kühler'));
@@ -372,60 +298,65 @@ function ember(t) {
   return `#${c.map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-function calendarCard(node, daily) {
-  const days = daily.map(d => ({ ...d, v: d.kWh === null || d.covered < 0.25 ? null : d.kWh / Math.min(1, Math.max(d.covered, 1e-9)) }));
-  const vals = days.filter(d => d.v !== null && d.v >= 0.5).map(d => d.v).sort((a, b) => a - b);
-  if (!vals.length) return false;
-  head(node, 'Heizkalender', 'Jeder Tag ein Kästchen', 'Je heller, desto mehr Gas an diesem Tag.');
-  const vmax = Math.max(1, vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.95))]);
-  const rows = [];
-  for (const d of days) {
-    const ym = d.date.slice(0, 7);
-    if (!rows.length || rows[rows.length - 1].ym !== ym) rows.push({ ym, days: [] });
-    rows[rows.length - 1].days.push(d);
-  }
-  const LBL = 44;
-  const T = 4;
-  const pitch = 12;
-  const cw = (W - LBL - 2) / 31;
-  const H = T + rows.length * pitch + 16;
+let compareYear = null; // gewählte Vergleichssaison (Startjahr); bleibt beim Neuzeichnen erhalten
+
+/** Tageswert für den Kalender: kWh, Teil-Tage hochgerechnet; null = keine Ablesung. */
+const dayValue = d => (d.kWh === null || d.covered < 0.25 ? null : d.kWh / Math.min(1, Math.max(d.covered, 1e-9)));
+
+/** Heizmonate (Monatsnummern in Heizjahr-Reihenfolge Aug–Jul): normaler Bedarf ≥ 1 % des Jahres. */
+function heatingMonths(ins) {
+  const normal = ins.season && ins.season.months;
+  const total = normal ? normal.reduce((s, x) => s + x.kWhNormal, 0) : 0;
+  const list = total > 0 ? normal.filter(x => x.kWhNormal >= 0.01 * total).map(x => Number(x.month.slice(5, 7))) : [10, 11, 12, 1, 2, 3, 4];
+  return [8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7].filter(m => list.includes(m));
+}
+
+function calendarCard(node, ins) {
+  const days = expandDays(ins.days).map(d => ({ ...d, v: dayValue(d) }));
+  if (!days.some(d => d.v !== null && d.v >= 0.5)) return false;
+  const byDate = new Map(days.map(d => [d.date, d]));
   const today = days[days.length - 1].date;
-  const { wrap, root } = chart(H, `Heizkalender der letzten ${rows.length} Monate`);
-  rows.forEach((row, ri) => {
-    const ry = T + ri * pitch;
-    const mo = Number(row.ym.slice(5, 7));
-    const label = ri === 0 || mo === 1 || ri === rows.length - 1 ? `${MONTHS[mo - 1]} ${row.ym.slice(2, 4)}` : MONTHS[mo - 1];
-    root.append(svg('text', { x: 0, y: ry + 8.5, class: 'axis' }, label));
-    for (const d of row.days) {
-      const cx = LBL + (Number(d.date.slice(8)) - 1) * cw;
-      const attrs = { x: cx, y: ry, width: cw - 1.6, height: pitch - 2.5, rx: 2 };
-      if (d.v === null) root.append(svg('rect', { ...attrs, class: 'cell-none' }));
-      else root.append(svg('rect', { ...attrs, fill: d.v < 0.5 ? '#2a2a2c' : ember(Math.sqrt(d.v / vmax)) }));
-      if (d.date === today) root.append(svg('rect', { ...attrs, class: 'today-box' }));
+  const current = heatYear(today.slice(0, 7));
+  const past = [...new Set(days.filter(d => d.v !== null && d.v >= 0.5).map(d => heatYear(d.date.slice(0, 7))))].filter(y => y < current).sort();
+  if (!past.includes(compareYear)) compareYear = past.length ? past[past.length - 1] : null;
+  const shownYears = [current].concat(compareYear === null ? [] : [compareYear]);
+  // Monate: Heizmonate + Monate, in denen in einer der beiden Saisons wirklich geheizt wurde
+  const months = heatingMonths(ins);
+  for (const y of shownYears) {
+    for (const mo of [8, 9, 5, 6, 7]) {
+      const ym = `${mo >= 8 ? y : y + 1}-${String(mo).padStart(2, '0')}`;
+      const sum = days.filter(d => d.date.startsWith(ym) && d.v !== null).reduce((s, d) => s + d.v, 0);
+      if (sum >= 20 && !months.includes(mo)) months.push(mo);
     }
-  });
-  for (const day of [1, 10, 20, 31]) root.append(svg('text', { x: LBL + (day - 0.5) * cw, y: H - 3, class: 'axis', 'text-anchor': 'middle' }, String(day)));
-  attachTip(wrap, root, W, H, (px, py) => {
-    const ri = Math.floor((py - T) / pitch);
-    const day = Math.floor((px - LBL) / cw) + 1;
-    const row = rows[ri];
-    const d = row && row.days.find(x => Number(x.date.slice(8)) === day);
-    if (!d) return null;
-    const ry = T + ri * pitch;
-    const cx = LBL + (day - 1) * cw;
-    const wd = WEEKDAYS[new Date(`${d.date}T12:00:00Z`).getUTCDay()];
-    return {
-      x: cx + cw / 2,
-      y: ry,
-      box: { x: cx - 1, y: ry - 1, w: cw + 0.4, h: pitch - 0.5 },
-      lines: [
-        `${wd}, ${formatDate(d.date)}`,
-        d.v === null ? 'noch keine Ablesung' : d.v < 0.5 ? 'nicht geheizt' : `${fmt(d.v, 1)} kWh${d.covered < 0.999 ? ' (hochgerechnet)' : ''}`,
-        typeof d.tm === 'number' ? `Ø ${temp(d.tm)}` : null,
-      ],
-    };
-  });
-  node.append(wrap);
+  }
+  months.sort((a, b) => ((a + 4) % 12) - ((b + 4) % 12)); // Aug … Jul
+  const inSeason = (d, y) => heatYear(d.date.slice(0, 7)) === y && months.includes(Number(d.date.slice(5, 7)));
+  const vals = days.filter(d => shownYears.some(y => inSeason(d, y)) && d.v !== null && d.v >= 0.5).map(d => d.v).sort((a, b) => a - b);
+  const vmax = Math.max(1, vals.length ? vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.95))] : 1);
+
+  head(node, 'Heizkalender', 'Diese Saison im Vergleich', 'Nur die Heizmonate. Je heller, desto mehr Gas an diesem Tag – beide Kalender mit derselben Skala, rechts die Monatssumme in kWh.');
+  node.append(html('h3', 'cal-head', `Saison ${yearLabel(current)}`), seasonCalendar(byDate, current, months, vmax, today));
+  const row = html('div', 'cal-compare');
+  row.append(html('h3', 'cal-head', 'Vergleich'));
+  if (past.length) {
+    const sel = html('select', 'select');
+    sel.setAttribute('aria-label', 'Vergleichssaison');
+    for (const y of past.slice().reverse()) {
+      const opt = html('option', '', `Saison ${yearLabel(y)}`);
+      opt.value = String(y);
+      opt.selected = y === compareYear;
+      sel.append(opt);
+    }
+    sel.addEventListener('change', () => {
+      compareYear = Number(sel.value);
+      calendarCard(node, ins);
+    });
+    row.append(sel);
+  }
+  node.append(row);
+  if (compareYear !== null) node.append(seasonCalendar(byDate, compareYear, months, vmax, today));
+  else node.append(html('p', 'muted small-text', 'Den Vergleich gibt es ab der zweiten Heizsaison mit Ablesungen.'));
+
   const scale = html('div', 'scale');
   scale.append(document.createTextNode('wenig'));
   for (const t of [0.1, 0.3, 0.5, 0.75, 1]) {
@@ -435,13 +366,90 @@ function calendarCard(node, daily) {
   }
   scale.append(document.createTextNode(`viel (${fmt(vmax)}+ kWh)`));
   node.append(scale);
-  const peak = days.reduce((m, d) => (d.v !== null && (!m || d.v > m.v) ? d : m), null);
-  const heatDays = days.filter(d => d.v !== null && d.v >= 1).length;
-  node.append(
-    rich('insight', ['Spitzentag: ', [formatDate(peak.date)], ` mit ${fmt(peak.v)} kWh`, typeof peak.tm === 'number' ? ` bei ${temp(peak.tm)}` : '', '. Geheizt an ', [String(heatDays)], ` von ${days.length} Tagen.`]),
-    html('p', 'foot', 'Zwischen zwei Ablesungen wird der Verbrauch nach Temperatur auf die Tage verteilt – einzelne Tage sind also geschätzt.')
-  );
+
+  // Gleicher Stichtag: diese Saison bis heute gegen die Vergleichssaison bis zum selben Kalendertag
+  const sumUntil = (y, mmdd) => {
+    const end = `${mmdd >= '08-01' ? y : y + 1}-${mmdd}`;
+    let sum = 0;
+    let first = null;
+    for (const d of days) {
+      if (heatYear(d.date.slice(0, 7)) !== y || d.date > end || d.kWh === null) continue;
+      sum += d.kWh;
+      if (!first && d.covered > 0) first = d.date;
+    }
+    return { sum, first };
+  };
+  const mmdd = today.slice(5);
+  const cur = sumUntil(current, mmdd);
+  if (compareYear !== null) {
+    const cmp = sumUntil(compareYear, mmdd);
+    const d = cmp.sum > 0 ? cur.sum / cmp.sum - 1 : null;
+    const late = cmp.first && cmp.first > `${compareYear}-08-01`;
+    node.append(rich('insight', [
+      `Bis heute (${formatDateShort(today)}): `, [`${fmt(cur.sum)} kWh`], ` – in ${yearLabel(compareYear)} bis zum selben Tag `, [`${fmt(cmp.sum)} kWh`],
+      d === null ? '.' : ` (${d < 0 ? '▼' : '▲'} ${pct(d)}).`,
+      late ? ` Ablesungen dort erst ab ${formatDate(cmp.first)}.` : '',
+    ]));
+  }
+  node.append(html('p', 'foot', 'Zwischen zwei Ablesungen wird der Verbrauch nach Temperatur auf die Tage verteilt – einzelne Tage sind also geschätzt, die Summe über alle Tage stimmt mit den Ablesungen überein.'));
   return true;
+}
+
+/** Ein Kalender für ein Heizjahr: Zeilen = Heizmonate, Spalten = Tage 1–31, rechts die Monatssumme. */
+function seasonCalendar(byDate, y, months, vmax, today) {
+  const LBL = 30;
+  const SUM = 38;
+  const T = 2;
+  const pitch = 12;
+  const cw = (W - LBL - SUM) / 31;
+  const H = T + months.length * pitch + 14;
+  const { wrap, root } = chart(H, `Heizkalender Saison ${yearLabel(y)}`);
+  const cells = [];
+  months.forEach((mo, ri) => {
+    const year = mo >= 8 ? y : y + 1;
+    const len = new Date(Date.UTC(year, mo, 0)).getUTCDate(); // Tage im Monat
+    const ry = T + ri * pitch;
+    root.append(svg('text', { x: 0, y: ry + 8.5, class: 'axis' }, MONTHS[mo - 1]));
+    let sum = 0;
+    let any = false;
+    for (let day = 1; day <= len; day++) {
+      const iso = `${year}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const d = byDate.get(iso);
+      const cx = LBL + (day - 1) * cw;
+      const attrs = { x: cx, y: ry, width: cw - 1.5, height: pitch - 2.5, rx: 2 };
+      if (!d || d.v === null) root.append(svg('rect', { ...attrs, class: 'cell-none' }));
+      else root.append(svg('rect', { ...attrs, fill: d.v < 0.5 ? '#2a2a2c' : ember(Math.sqrt(d.v / vmax)) }));
+      if (iso === today) root.append(svg('rect', { ...attrs, class: 'today-box' }));
+      if (d && d.kWh !== null) {
+        sum += d.kWh;
+        any = true;
+      }
+      cells.push({ iso, d, ri, day });
+    }
+    root.append(svg('text', { x: W, y: ry + 8.5, class: any ? 'axis sum' : 'axis faint', 'text-anchor': 'end' }, any ? fmt(sum) : '–'));
+  });
+  for (const day of [1, 10, 20, 31]) root.append(svg('text', { x: LBL + (day - 0.5) * cw, y: H - 2, class: 'axis', 'text-anchor': 'middle' }, String(day)));
+  attachTip(wrap, root, W, H, (px, py) => {
+    const ri = Math.floor((py - T) / pitch);
+    const day = Math.floor((px - LBL) / cw) + 1;
+    const c = cells.find(x => x.ri === ri && x.day === day);
+    if (!c) return null;
+    const ry = T + ri * pitch;
+    const cx = LBL + (day - 1) * cw;
+    const d = c.d;
+    const wd = WEEKDAYS[new Date(`${c.iso}T12:00:00Z`).getUTCDay()];
+    return {
+      x: cx + cw / 2,
+      y: ry,
+      box: { x: cx - 1, y: ry - 1, w: cw + 0.5, h: pitch - 0.5 },
+      lines: [
+        `${wd}, ${formatDate(c.iso)}`,
+        !d || d.v === null ? (c.iso > today ? 'noch nicht' : 'keine Ablesung') : d.v < 0.5 ? 'nicht geheizt' : `${fmt(d.v, 1)} kWh${d.covered < 0.999 ? ' (hochgerechnet)' : ''}`,
+        d && typeof d.tm === 'number' ? `Ø ${temp(d.tm)}` : null,
+      ],
+    };
+  });
+  return wrap;
 }
 
 // ---------- 2 · Heizsaison-Fortschritt ----------

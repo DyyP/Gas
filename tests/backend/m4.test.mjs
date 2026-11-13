@@ -28,9 +28,9 @@ function setupWith({ now = '2026-11-05T17:00:00Z', to = '2026-11-03' } = {}) {
   return { b, o, last: rows[rows.length - 1] };
 }
 
-test('Übersicht: Schema 4, Insights, Monate mit Normal-Erwartung, Zeiträume mit Temperatur', () => {
+test('Übersicht: Schema 5, Insights, Monate mit Normal-Erwartung, Zeiträume mit Temperatur', () => {
   const { o } = setupWith();
-  assert.equal(o.schema, 4);
+  assert.equal(o.schema, 5);
   assert.ok(o.insights);
   assert.ok(o.months.every(m => typeof m.kWhNormal === 'number'));
   // Wetter der Attrappe ist jedes Jahr gleich → Verbrauch ≈ Normal-Erwartung
@@ -46,20 +46,27 @@ test('Live-Zähler: Schätzung seit der letzten Ablesung bis jetzt, mit Unsicher
   near(e.hours, 2 * 24 + 6, 0.2, 'von 03.11. 12:00 bis 05.11. 18:00 (Berlin)');
   let expected = 0;
   for (const [d, f] of [['2026-11-03', 0.5], ['2026-11-04', 1], ['2026-11-05', 0.75]]) expected += f * 0.35 * Math.max(0, 13 - seasonalTemp(d));
-  near(e.m3, expected, 0.05 * expected);
+  // Live-Zähler rechnet mit dem Heizniveau dieser Saison (hier ≈ 1, weil immer gleich geheizt wurde)
+  const k = o.insights.level.factor;
+  near(k, 1, 0.05);
+  near(e.m3, expected * k, 0.03 * expected);
   near(e.value, last.value + e.m3, 1e-6);
   assert.ok(e.sd > 0);
-  const rate = 0.35 * Math.max(0, 13 - seasonalTemp('2026-11-05'));
+  const rate = k * 0.35 * Math.max(0, 13 - seasonalTemp('2026-11-05'));
   near(e.m3PerDay, rate, 0.03 * rate);
   near(e.eurPerDay, e.kWhPerDay * 0.1 + (12 * 12) / 365, 0.01);
 });
 
-test('Heizkalender: höchstens 366 Tage, endet heute', () => {
+test('Tageswerte: alle Tage seit der ersten Ablesung als gleich lange Spalten, enden heute', () => {
   const { o } = setupWith();
-  const d = o.insights.daily;
-  assert.ok(d.length <= 366 && d.length > 300);
-  assert.equal(d[d.length - 1].date, '2026-11-05');
-  assert.ok(d.some(x => x.kWh > 0));
+  const d = o.insights.days;
+  assert.equal(d.start, '2025-10-26');
+  const n = d.kWh.length;
+  assert.equal(n, 376, '26.10.2025 bis 05.11.2026');
+  for (const col of ['m3', 'tm', 'covered']) assert.equal(d[col].length, n, col);
+  assert.ok(d.kWh.some(x => x > 0));
+  assert.equal(d.covered[n - 1], 0, 'heute noch nicht abgelesen');
+  assert.equal(d.kWh[n - 1], null);
 });
 
 test('Sparrechner und Heizsaison: plausibel und konsistent', () => {
@@ -98,5 +105,6 @@ test('Ohne Modell: nur Tarif, Faktor und Tageswerte', () => {
   const o = b.post({ v: 1, key: b.store.KEY, action: 'overview' }).data.overview;
   assert.equal(o.insights.estimate, undefined);
   assert.equal(o.insights.savings, undefined);
-  assert.ok(Array.isArray(o.insights.daily));
+  assert.equal(o.insights.level, undefined);
+  assert.ok(Array.isArray(o.insights.days.kWh));
 });

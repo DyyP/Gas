@@ -6,7 +6,7 @@
  */
 
 const API_VERSION = 1;
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const TZ = 'Europe/Berlin';
 const MIN_DATE = '2000-01-01';
 const DEFAULT_MINUTES = 12 * 60; // Ablesung ohne Uhrzeit gilt als 12:00

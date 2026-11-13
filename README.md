@@ -7,12 +7,13 @@ und am PC im Browser. Kostenlos, kein eigener Server:
 App (GitHub Pages, Ordner docs/)  ──POST──►  Google Apps Script (Web-App)  ──►  Google Sheet „GasWerte“
 ```
 
-**Stand: V1 / Meilenstein M4** – Ablesungen erfassen (auch offline), Tagesmitteltemperatur der DWD-Station Mannheim
+**Stand: V1 / Meilenstein M5** – Ablesungen erfassen (auch offline), Tagesmitteltemperatur der DWD-Station Mannheim
 (täglich automatisch, Historie ab 2020), Verbrauchsmodell mit Heizgrenze aus deinen Daten, Verbrauch modellgewichtet auf
 Tage verteilt, kWh und Kosten taggenau, **Prognose bis Periodenende** (Nachzahlung/Guthaben mit 80-%-Bereich, als
-Verlaufsdiagramm), **Abschlagsempfehlung**, Ampel zur Verlässlichkeit, Plausibilitätsprüfung mit dem Modell.
-Dazu **Live-Zähler** (geschätzter Stand jetzt) und eine **Analyse-Seite**: Heizkurve, Monate gegen Normalwetter,
-Kosten pro Tag mit Sparrechner, Heizkalender, Heizsaison-Fortschritt.
+Verlaufsdiagramm) wahlweise **langfristig oder „wie diese Saison“**, **Abschlagsempfehlung**, Ampel zur
+Verlässlichkeit, Plausibilitätsprüfung mit dem Modell. Dazu **Live-Zähler**, **Rückblick der letzten 4 Wochen** und
+eine **Analyse-Seite**: Monate gegen Normalwetter, Heizkalender mit Vergleichssaison, Kosten pro Tag mit Sparrechner,
+Heizsaison-Fortschritt.
 Plan und Entscheidungen: [KONZEPT.md](KONZEPT.md).
 
 Wetterdaten: Quelle **Deutscher Wetterdienst** (DWD Opendata, CC BY 4.0).
@@ -111,7 +112,9 @@ Fehlende Tage (z. B. heute) werden vorläufig fortgeschrieben bzw. interpoliert 
 - [ ] Apps Script → **Trigger** (Wecker-Symbol): genau ein Trigger `taeglich`, täglich 13–14 Uhr
 - [ ] App → Erfassen: Live-Zähler zählt weiter (alle 10 s), Vergleich mit dem echten Zähler passt im Rahmen von ±
 - [ ] App → Prognose: Ampel, Abrechnungszeiträume mit Saldo/Prognose/Empfehlung und Diagramm
-- [ ] App → Analyse: fünf Karten, Antippen zeigt Details, Tippen daneben schließt; Tabellen aufklappbar
+- [ ] App → Erfassen: „Letzte 4 Wochen“ unter dem Formular, Antippen wechselt m³ ↔ kWh
+- [ ] App → Prognose: Umschalter „Langfristig | Diese Saison“ bei der laufenden Periode
+- [ ] App → Analyse: vier Karten, Heizkalender mit Vergleichssaison (Auswahl), Antippen zeigt Details; Tabellen aufklappbar
 
 ---
 
@@ -158,6 +161,8 @@ node tools/render-icons.mjs        # Icons aus tools/assets/icon.svg
 - **Prognose:** 4.000 Durchläufe je Periode mit zufälligen Modellparametern, zufälliger Tagesstreuung, dem Wetter eines
   zufälligen Jahres seit 2020 für die Zukunft und ±3 % Unsicherheit der Umrechnung (bis die Rechnung da ist).
   Angezeigt werden der Median und der Bereich, in dem das Ergebnis mit 80 % Wahrscheinlichkeit liegt.
+- **„Diese Saison“:** dieselbe Rechnung mit einem Modell nur aus den Ablesungen seit 01.08. (mindestens 4 Wochen).
+  Ab 6 Zeiträumen mit Heizbedarf werden Steigung und Heizgrenze neu geschätzt, vorher ein Faktor auf das Jahresmodell.
 - **Abschlagsempfehlung:** Rate für die restlichen Monate, bei der der Median ausgeglichen wäre – „mit Puffer“ beim
   80-%-Wert (dann droht nur noch mit 20 % Wahrscheinlichkeit eine Nachzahlung).
 - **Ampel:** grün ab ≥ 50 % einer normalen Heizsaison an Daten und ≤ 10 % Unsicherheit des Verbrauchs je Heizgradtag.

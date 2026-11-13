@@ -1,6 +1,6 @@
 # Gaszähler V1 – Konzept
 
-Stand: 08.11.2026 · Status: **freigegeben**, M1–M4 umgesetzt.
+Stand: 13.11.2026 · Status: **freigegeben**, M1–M5 umgesetzt.
 Lebendes Dokument – Quelle der Wahrheit für Entscheidungen und für spätere Sessions.
 
 ---
@@ -60,6 +60,11 @@ Jahresabrechnung, 7-Tage-Vorhersage in der Prognose, ESP32-Sensor, Erinnerungen.
 | 08.11. | **Fehler behoben:** Service Worker liefert die App-Hülle nur noch aus dem Cache *einer* Version (vorher „Netz zuerst, nach 3 s Cache“ je Datei → bei langsamem Netz Mischung aus alten und neuen Dateien → App startete nicht). Jede Änderung ergibt über `BUILD` (Prüfsumme, `tools/stamp.mjs`, CI prüft) eine neue sw.js; nach dem Update lädt die App einmal neu. `config.js` bleibt „Netz zuerst“. Notbremse `guard.js`: startet die App nicht binnen 8 s, holt der Service Worker die neueste Version vollständig und die Seite lädt einmal neu; klappt es dann nicht, zeigt sie den Fehlertext (Schlüssel/Warteschlange bleiben). Nicht abmelden – ohne Service Worker liefert der Browser-Cache (GitHub Pages: 10 min) wieder alte Dateien | Ausfall beim Nutzer nach dem M4-Update; Ursache im Test nachgestellt |
 | 08.11. | **Fehler behoben:** `analyse.js` → `diagramme.js` | Werbeblocker (EasyPrivacy-Regel `/analyse.js`, z. B. uBlock Origin) sperrten die Datei → App startete in Firefox nicht; Repo-Test verbietet typische Tracker-Namen |
 | 08.11. | **Fehler behoben:** Datumsfeld ragte auf dem iPhone aus der Karte, Zählwerk zu breit für 375/320 px | iOS-Datumsfelder ignorieren `width: 100%` ohne `appearance: none`; Zählwerk und Kacheln jetzt flexibel; Browser-Test prüft 320 und 375 px |
+| 13.11. | **M5:** Prognose-Umschalter „Langfristig \| Diese Saison“ (nur laufende Periode). „Diese Saison“ = Modell nur aus den Ablesezeiträumen seit 01.08. (mind. 28 Tage): ab 6 Zeiträumen mit Heizbedarf Steigung **und Heizgrenze** neu geschätzt, davor ein Faktor auf das Jahresmodell (Summenverhältnis, nach Heizbedarf gewichtet) | Wunsch Nutzer: „wenn ich so weiterheize“, alle Werte der Saison temperaturgewichtet. Ein reiner Faktor würde ein heruntergedrehtes Thermostat (= tiefere Heizgrenze) im Winter zu günstig fortschreiben – im Test mit Heizgrenze 13 → 11 °C erkennt das Saisonmodell 11 °C und trifft den künftigen Verbrauch auf 10 % |
+| 13.11. | Live-Zähler, Plausibilität, Kosten pro Tag, Sparrechner und „kommt noch“ rechnen mit dem Saisonmodell; „Monate gegen Normalwetter“ und die Tagesverteilung bleiben beim Jahresmodell | aktuelle Werte sollen zum aktuellen Heizverhalten passen (sonst läuft der Live-Zähler bei halbem Verbrauch doppelt so schnell); der Monatsvergleich zeigt gerade die Änderung gegenüber dem Jahresmodell |
+| 13.11. | **M5:** „Letzte 4 Wochen“ unter dem Eingabeformular: Kalenderwochen Mo–So, nur Fakten bis zur letzten Ablesung, Tippen wechselt m³ ↔ kWh | Wunsch Nutzer: Rückblick ohne Vorhersage |
+| 13.11. | **M5:** Heizkalender nur Heizmonate (normaler Bedarf ≥ 1 % des Jahres, bei dir Okt–Mai; plus Monate mit echtem Heizen), zwei Kalender untereinander: aktuelle Saison und Vergleichssaison per Auswahl, gleiche Farbskala, Monatssummen, Vergleich „bis zum selben Tag“ | Wunsch Nutzer |
+| 13.11. | **M5:** Heizkurve entfernt; Reihenfolge Monate · Heizkalender · Kosten pro Tag · Heizsaison | Wunsch Nutzer: Heizkurve und Kosten pro Tag zeigen dasselbe |
 | 08.11. | **Backlog:** PDF-Export | Wunsch Nutzer „für später“ |
 | 08.11. | Optimierungen: nach dem Speichern keine zweite Übersichtsanfrage, beim Speichern bereits gelesene Daten weiterverwenden, `getDataRange` | Kaltstarts von Apps Script kosten bis ~15 s pro Anfrage; Übersichts-Cache erst nach Messung |
 
@@ -203,13 +208,19 @@ CV > 15 % · Grün: sonst. Dazu ein Satz in Klartext.
 
 - **Live-Zähler:** Erwartung und σ für den Zeitraum letzte Ablesung → jetzt (wie ein Ablesezeitraum), dazu m³, kWh
   und € pro Tag bei der heutigen Temperatur (Arbeitspreis + Grundpreis je Tag).
-- **Heizkurve:** je Ablesezeitraum mittlere Temperatur (`intervals[].tmean`) gegen kWh/Tag; Linie = Modell
-  b + a · max(0, θ − t). Punkte im Übergang liegen etwas über der Linie (Mittel über warme und kalte Tage).
 - **Monate gegen Normalwetter (je Heizjahr):** `months[].kWhNormal` = Σ (b + a · Normal-HGT) × Faktor; kommende Monate aus `season.months`. Im Tooltip zusätzlich
   „bei diesem Wetter erwartet“ = kWhNormal + a_kWh · (HGT − Normal-HGT) → trennt Wetter von Verhalten.
-- **Kosten pro Tag:** Kurve über −10…20 °C zum aktuellen Tarif. **Sparrechner:** Normal-HGT(θ) − Normal-HGT(θ − 1).
-- **Heizkalender:** die letzten 366 Tage, Wert = kWh des Tages (Teil-Tage hochgerechnet), Glut-Skala mit Wurzel,
-  Obergrenze = 95-%-Quantil. Einzelne Tage sind modellverteilt, nicht gemessen (steht unter der Karte).
+- **Kosten pro Tag:** Kurve über −10…20 °C zum aktuellen Tarif, mit dem Saisonmodell (sonst Jahresmodell).
+  **Sparrechner:** Normal-HGT(θ) − Normal-HGT(θ − 1).
+- **Heizkalender (M5):** alle Tage seit der ersten Ablesung (`insights.days`, kompakte Spalten), nur Heizmonate;
+  aktuelle Saison + Vergleichssaison (Auswahl), Wert = kWh des Tages (Teil-Tage hochgerechnet), Glut-Skala mit Wurzel,
+  gemeinsame Obergrenze = 95-%-Quantil beider Saisons. Einzelne Tage sind modellverteilt, Monatssummen gemessen.
+- **Letzte 4 Wochen (M5, Erfassen):** Summen der Tageswerte je Kalenderwoche bis zur letzten Ablesung.
+- **Saisonmodell (M5, `seasonModel_`):** Zeiträume, die seit 01.08. enden (mind. 28 Tage zurück); nur wenn das
+  Jahresmodell dort ≥ 14 m³ (≈ 150 kWh) erwartet. Ab 6 Zeiträumen mit Heizbedarf `fitModel_` auf diese Zeiträume
+  (Heizgrenze aus den Daten, sonst die des Jahresmodells), sonst Faktor k = Σ gemessen / Σ erwartet mit
+  Unsicherheit (gewichtete Streuung, mindestens cv/√n_eff) in den Parametern. Kennzahl „X % weniger“ = Verbrauch im
+  Normaljahr Saisonmodell ÷ Jahresmodell. Zweite Prognose = dieselbe Monte-Carlo-Rechnung mit dem Saisonmodell.
 - **Heizsaison:** Anteil der normalen HGT seit 01.08., Skala Okt/Jan/Apr an den Monatsersten (`season.marks`).
 
 ### 6.8 Plausibilität (M1 umgesetzt)
@@ -278,7 +289,8 @@ Grenze der Tests: Die Attrappe bildet Apps Script nach – echtes Verhalten prü
 | **M2 Wetter & Kosten** | DWD (Historie ab 2020 + täglich), Tage/Monate, Kosten taggenau, Abschläge, Saldo je Periode, Hinweise | ✅ umgesetzt |
 | **M3 Modell & Prognose** | Modell mit Heizgrenze, Monte Carlo, Ampel, Abschlagsempfehlung, Plausibilität mit Modell | ✅ umgesetzt |
 | **M4 Dashboard** | Farben, Navigation mit Symbolen, Prognose-Diagramm, Live-Zähler, Analyse (Heizkurve, Monate gegen Normalwetter, Kosten pro Tag + Sparrechner, Heizkalender, Heizsaison), Tooltips | ✅ umgesetzt |
-| **Backlog** | PDF-Export (Jahresbericht) | später |
+| **M5 Feinschliff nach 1 Woche** | Prognose „Diese Saison“, Rückblick 4 Wochen, Heizkalender mit Vergleich, Heizkurve entfernt | ✅ umgesetzt |
+| **Backlog** | PDF-Export (Jahresbericht), Wohnungs-Steckbrief (Recherche fertig, wartet auf Wohnfläche & Co.) | später |
 
 ---
 

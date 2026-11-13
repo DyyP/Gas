@@ -155,7 +155,7 @@ function dailyNormals_(weather, fromYear, toYear, heizgrenze) {
 /**
  * Gesamtrechnung. in: { readings (bereinigt, sortiert), pairs (readingPairs_), weather {iso: tm}, conversions, placeholder,
  * tariffs [{from, ap, gp}], payments [{from, amount, day}], periods [{name, start, end}], settings, today }
- * Rückgabe { days, months, periods, model, rating, temps, hints, weatherLast }.
+ * Rückgabe { days, months, periods, model, season, rating, temps, hints, weatherLast }.
  */
 function computeAll_(input) {
   const s = input.settings;
@@ -179,6 +179,7 @@ function computeAll_(input) {
   };
   const model = fitModel_(input.pairs, temps, s, yearNormal);
   const heizgrenze = model ? model.theta : s.Heizgrenze_C;
+  const season = seasonModel_(input.pairs, temps, model, to, s, yearNormal);
   const dist = distributeReadings_(input.pairs, temps, heizgrenze, model);
   hints.push.apply(hints, dist.hints);
   const normals = dailyNormals_(input.weather, fromYear, lastFullYear, heizgrenze);
@@ -230,12 +231,19 @@ function computeAll_(input) {
       // ±3 % solange Platzhalter/Schätzung, sonst ±0,5 % (der Brennwert schwankt von Monat zu Monat)
       const last = input.conversions[input.conversions.length - 1];
       const estimated = days.some(d => d.date >= p.start && d.date <= p.end && d.factorSource !== 'Rechnung') || (p.end > to && !(last && last.status === 'Rechnung'));
-      sum.forecast = forecastPeriod_(p, Object.assign({ u: estimated ? (s.Unsicherheit_Umrechnung_Prozent || 3) / 100 : 0.005 }, fctx));
+      const u = estimated ? (s.Unsicherheit_Umrechnung_Prozent || 3) / 100 : 0.005;
+      sum.forecast = forecastPeriod_(p, Object.assign({ u: u }, fctx));
+      // „Wenn du so weiterheizt wie diese Saison“: gleiches Wetter, Modell aus den Ablesungen der Saison
+      if (sum.status === 'läuft' && season) {
+        sum.forecastSeason = forecastPeriod_(p, Object.assign({}, fctx, {
+          u: u, model: season, theta: season.theta, normals: dailyNormals_(input.weather, fromYear, lastFullYear, season.theta),
+        }));
+      }
     }
     return sum;
   });
   if (!model && input.pairs.length) hints.push({ level: 'info', text: modelRating_(null).text });
-  return { days: days, months: aggregateMonths_(days), periods: periods, model: model, rating: modelRating_(model), temps: temps, hints: hints, weatherLast: weatherLast };
+  return { days: days, months: aggregateMonths_(days), periods: periods, model: model, season: season, rating: modelRating_(model), temps: temps, hints: hints, weatherLast: weatherLast };
 }
 
 function aggregateMonths_(days) {

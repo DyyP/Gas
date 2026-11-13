@@ -12,7 +12,7 @@
  */
 
 const API_VERSION = 1;
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const TZ = 'Europe/Berlin';
 const MIN_DATE = '2000-01-01';
 const DEFAULT_MINUTES = 12 * 60; // Ablesung ohne Uhrzeit gilt als 12:00
@@ -608,6 +608,81 @@ function predictPair_(m, days, d) {
   return { mean: mean, sd: Math.sqrt(m.s2 * d + varParam) };
 }
 
+const SEASON_MIN_EXPECTED_M3 = 14; // ≈ 150 kWh Heizbedarf: darunter wäre jede Aussage Zufall
+const SEASON_MIN_DAYS = 28;
+const SEASON_FIT_MIN = 6; // ab so vielen Zeiträumen mit Heizbedarf: eigene Heizgrenze und Steigung
+
+/**
+ * Modell nur aus dieser Heizsaison („wenn du so weiterheizt“): alle Ablesezeiträume, die seit Beginn des Heizjahres
+ * (01.08.) enden – mindestens die der letzten 28 Tage.
+ * - Ab 6 Zeiträumen mit Heizbedarf werden Heizgrenze und Steigung neu geschätzt (wie das Jahresmodell). So wird auch
+ *   ein heruntergedrehtes Thermostat richtig erkannt: Es verschiebt die Heizgrenze, statt jeden Tag gleich viel
+ *   Prozent zu sparen.
+ * - Davor: ein Faktor auf das Jahresmodell (gemessen ÷ erwartet bei echtem Wetter; als Summenverhältnis nach
+ *   Heizbedarf gewichtet), Heizgrenze unverändert, Unsicherheit des Faktors in den Parametern.
+ * factor = Verbrauch im Normaljahr Saisonmodell ÷ Jahresmodell (fairer Vergleich, egal was sich geändert hat).
+ * Rückgabe null (kein Modell / zu wenig Heizbedarf) oder ein Modell wie fitModel_ plus
+ * { source: 'Saison' | 'Faktor', factor, from, to, nSeason, expectedM3, actualM3 }.
+ */
+function seasonModel_(pairs, temps, m, today, settings, normalYearHgt) {
+  if (!m) return null;
+  const used = pairs.filter(p => p.b.exclude !== true);
+  if (!used.length) return null;
+  const lastT = used.reduce((t, p) => Math.max(t, p.b.t), -Infinity);
+  const y = Number(today.slice(5, 7)) >= 8 ? Number(today.slice(0, 4)) : Number(today.slice(0, 4)) - 1;
+  const from = Math.min(dayNumber_(y + '-08-01'), Math.floor(lastT) - SEASON_MIN_DAYS);
+  const rows = [];
+  let to = null;
+  for (const p of used) {
+    if (p.b.t <= from) continue;
+    const days = pairDays_(p, temps);
+    if (!days) continue;
+    rows.push({ p: p, y: p.dv, w: m.a * hgtOf_(days, m.theta) + m.b * (p.b.t - p.a.t) }); // w: Erwartung Jahresmodell
+    if (!to || p.b.date > to) to = p.b.date;
+  }
+  const sumW = rows.reduce((s, r) => s + r.w, 0);
+  const sumY = rows.reduce((s, r) => s + r.y, 0);
+  if (sumW < SEASON_MIN_EXPECTED_M3) return null;
+  const heated = rows.filter(r => r.w > 0.2);
+
+  let sm = null;
+  let source = 'Saison';
+  if (heated.length >= SEASON_FIT_MIN) {
+    sm = fitModel_(rows.map(r => r.p), temps, { Heizgrenze_aus_Daten: settings.Heizgrenze_aus_Daten, Heizgrenze_C: m.theta }, normalYearHgt);
+  }
+  if (!sm) {
+    source = 'Faktor';
+    const k = sumY / sumW;
+    // Unsicherheit: gewichtete Streuung der einzelnen Verhältnisse, mindestens die Modellstreuung (cv) je Zeitraum
+    const sumW2 = heated.reduce((s, r) => s + r.w * r.w, 0);
+    const n = heated.length;
+    const empirical = n >= 3 ? Math.sqrt((heated.reduce((s, r) => s + r.w * r.w * Math.pow(r.y / r.w - k, 2), 0) / (sumW * sumW)) * (n / (n - 1))) : 0;
+    const floor = k * (m.cv || 0.2) * (sumW2 > 0 ? Math.sqrt(sumW2) / sumW : 1);
+    const se = Math.max(empirical, floor, 0.02 * k);
+    sm = scaleModel_(m, k, Number.isFinite(se) ? se : 0.2 * k);
+  }
+  const year = x => x.b * 365 + x.a * normalYearHgt(x.theta);
+  return Object.assign(sm, {
+    source: source,
+    factor: year(m) > 0 ? year(sm) / year(m) : 1,
+    from: isoFromDayNumber_(from),
+    to: to,
+    nSeason: rows.length,
+    expectedM3: sumW,
+    actualM3: sumY,
+  });
+}
+
+/** Jahresmodell mit Faktor k (Heizgrenze und Tagesstreuung gleich); se = Unsicherheit von k → in die Parameter. */
+function scaleModel_(m, k, se) {
+  const s = se || 0;
+  return Object.assign({}, m, {
+    a: m.a * k,
+    b: m.b * k,
+    cov: { aa: m.cov.aa * k * k + Math.pow(m.a * s, 2), ab: m.cov.ab * k * k + m.a * m.b * s * s, bb: m.cov.bb * k * k + Math.pow(m.b * s, 2) },
+  });
+}
+
 // ===== Calc.gs =====
 
 /**
@@ -767,7 +842,7 @@ function dailyNormals_(weather, fromYear, toYear, heizgrenze) {
 /**
  * Gesamtrechnung. in: { readings (bereinigt, sortiert), pairs (readingPairs_), weather {iso: tm}, conversions, placeholder,
  * tariffs [{from, ap, gp}], payments [{from, amount, day}], periods [{name, start, end}], settings, today }
- * Rückgabe { days, months, periods, model, rating, temps, hints, weatherLast }.
+ * Rückgabe { days, months, periods, model, season, rating, temps, hints, weatherLast }.
  */
 function computeAll_(input) {
   const s = input.settings;
@@ -791,6 +866,7 @@ function computeAll_(input) {
   };
   const model = fitModel_(input.pairs, temps, s, yearNormal);
   const heizgrenze = model ? model.theta : s.Heizgrenze_C;
+  const season = seasonModel_(input.pairs, temps, model, to, s, yearNormal);
   const dist = distributeReadings_(input.pairs, temps, heizgrenze, model);
   hints.push.apply(hints, dist.hints);
   const normals = dailyNormals_(input.weather, fromYear, lastFullYear, heizgrenze);
@@ -842,12 +918,19 @@ function computeAll_(input) {
       // ±3 % solange Platzhalter/Schätzung, sonst ±0,5 % (der Brennwert schwankt von Monat zu Monat)
       const last = input.conversions[input.conversions.length - 1];
       const estimated = days.some(d => d.date >= p.start && d.date <= p.end && d.factorSource !== 'Rechnung') || (p.end > to && !(last && last.status === 'Rechnung'));
-      sum.forecast = forecastPeriod_(p, Object.assign({ u: estimated ? (s.Unsicherheit_Umrechnung_Prozent || 3) / 100 : 0.005 }, fctx));
+      const u = estimated ? (s.Unsicherheit_Umrechnung_Prozent || 3) / 100 : 0.005;
+      sum.forecast = forecastPeriod_(p, Object.assign({ u: u }, fctx));
+      // „Wenn du so weiterheizt wie diese Saison“: gleiches Wetter, Modell aus den Ablesungen der Saison
+      if (sum.status === 'läuft' && season) {
+        sum.forecastSeason = forecastPeriod_(p, Object.assign({}, fctx, {
+          u: u, model: season, theta: season.theta, normals: dailyNormals_(input.weather, fromYear, lastFullYear, season.theta),
+        }));
+      }
     }
     return sum;
   });
   if (!model && input.pairs.length) hints.push({ level: 'info', text: modelRating_(null).text });
-  return { days: days, months: aggregateMonths_(days), periods: periods, model: model, rating: modelRating_(model), temps: temps, hints: hints, weatherLast: weatherLast };
+  return { days: days, months: aggregateMonths_(days), periods: periods, model: model, season: season, rating: modelRating_(model), temps: temps, hints: hints, weatherLast: weatherLast };
 }
 
 function aggregateMonths_(days) {
@@ -1021,7 +1104,8 @@ function tmInYear_(weather, y, mmdd) {
 
 /**
  * Prognose für eine Periode. ctx: { days (Tagesrechnung bis heute), model, theta, weather, years [Jahre],
- * normals {MM-TT: HGT}, conversions, placeholder, tariffs, payments, settings, today, u (rel. Umrechnungsunsicherheit) }
+ * normals {MM-TT: HGT bei theta}, conversions, placeholder, tariffs, payments, settings, today, u (rel. Umrechnungsunsicherheit) }
+ * – mit dem Saisonmodell als model/theta/normals ergibt das „wenn du so weiterheizt wie diese Saison“.
  * Rückgabe null, wenn ohne Modell unbekannte Tage bleiben oder ein Tarif fehlt.
  */
 function forecastPeriod_(p, ctx) {
@@ -1063,7 +1147,7 @@ function forecastPeriod_(p, ctx) {
     acc.costM += (d.m3 || 0) * f * ap;
     const u = 1 - d.covered;
     if (u > 1e-9) {
-      const h = d.hgt !== null ? d.hgt : ctx.normals[d.date.slice(5)] || 0;
+      const h = d.tm !== null && d.tm !== undefined ? Math.max(0, ctx.theta - d.tm) : ctx.normals[d.date.slice(5)] || 0;
       acc.M1 += u;
       acc.MH += u * h;
       acc.K1 += u * f;
@@ -1202,11 +1286,13 @@ function forecastPeriod_(p, ctx) {
 
 /**
  * r: Ergebnis von computeAll_ · input: dessen Eingaben · nowT: jetzt als gebrochene Tagesnummer (Berlin).
- * Rückgabe { tariffNow, factorNow, daily, estimate?, savings?, season? } – ohne Modell nur die ersten drei.
+ * Rückgabe { tariffNow, factorNow, days, level?, estimate?, savings?, season? } – ohne Modell nur die ersten drei.
+ * Live-Zähler, Sparrechner und „kommt noch“ rechnen mit dem Heizniveau dieser Saison (wenn bekannt).
  */
 function insights_(r, input, nowT) {
   const s = input.settings;
-  const m = r.model;
+  const season = r.season;
+  const m = season || r.model;
   const today = input.today;
   const tariff = validAt_(input.tariffs, today);
   const factor = factorAt_(input.conversions, today, input.placeholder).factor;
@@ -1214,12 +1300,31 @@ function insights_(r, input, nowT) {
   const out = {
     tariffNow: tariff ? { ap: tariff.ap, gp: tariff.gp, name: tariff.name || '', basePerDay: round_(basePerDay, 4) } : null,
     factorNow: round_(factor, 4),
-    // Heizkalender: die letzten 12 Monate Tag für Tag
-    daily: r.days
-      .filter(d => dayNumber_(today) - dayNumber_(d.date) < 366)
-      .map(d => ({ date: d.date, kWh: d.kWh === null ? null : round_(d.kWh, 2), tm: d.tm, covered: round_(d.covered, 2) })),
+    // Alle Tage seit der ersten Ablesung als Spalten (kompakt) – für Heizkalender und Wochenrückblick
+    days: {
+      start: r.days.length ? r.days[0].date : today,
+      m3: r.days.map(d => (d.m3 === null ? null : round_(d.m3, 3))),
+      kWh: r.days.map(d => (d.kWh === null ? null : round_(d.kWh, 2))),
+      tm: r.days.map(d => (d.tm === null ? null : round_(d.tm, 1))),
+      covered: r.days.map(d => round_(d.covered, 2)),
+    },
   };
   if (!m) return out;
+  if (season) {
+    out.level = {
+      source: season.source,
+      factor: round_(season.factor, 3),
+      theta: season.theta,
+      a: round_(season.a, 4),
+      aKWh: round_(season.a * factor, 3),
+      b: round_(season.b, 3),
+      n: season.nSeason,
+      from: season.from,
+      to: season.to,
+      expectedKWh: round_(season.expectedM3 * factor, 0),
+      actualKWh: round_(season.actualM3 * factor, 0),
+    };
+  }
 
   // Live-Zähler: erwarteter Verbrauch seit der letzten Ablesung bis jetzt
   let last = null;
@@ -1848,8 +1953,8 @@ function addReadingAction_(ss, input) {
 
 /** Erwartung aus dem Modell für einen neuen Zeitraum (nur bei brauchbarem Modell). */
 function modelExpectation_(result) {
-  const m = result.model;
-  if (!m || result.rating.level === 'rot') return null;
+  if (!result.model || result.rating.level === 'rot') return null;
+  const m = result.season || result.model; // so wie du diese Saison heizt
   return (before, r) => {
     const days = pairDays_({ a: before, b: r }, result.temps);
     return days ? predictPair_(m, days, r.t - before.t) : null;

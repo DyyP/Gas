@@ -40,3 +40,18 @@ test('isIsoDate, daysBetween, relativeDays, readingT', () => {
   assert.equal(readingT('1970-01-02', null), 1.5);
   assert.equal(readingT('1970-01-02', '06:00'), 1.25);
 });
+
+test('isoWeek: Kalenderwoche nach ISO 8601, auch an Jahresgrenzen', async () => {
+  const { isoWeek } = await import('../../docs/js/format.js');
+  for (const [d, w] of [['2026-11-13', 46], ['2026-01-01', 1], ['2025-12-29', 1], ['2026-12-31', 53], ['2027-01-03', 53], ['2021-01-03', 53], ['2021-01-04', 1], ['2024-12-30', 1]]) {
+    assert.equal(isoWeek(d), w, d);
+  }
+});
+
+test('expandDays: kompakte Spalten → Tage mit Datum (über Monats- und Schaltjahresgrenzen)', async () => {
+  const { expandDays } = await import('../../docs/js/format.js');
+  const d = expandDays({ start: '2028-02-28', m3: [1, 2, null], kWh: [10, 20, null], tm: [1, 2, 3], covered: [1, 1, 0] });
+  assert.deepEqual(d.map(x => x.date), ['2028-02-28', '2028-02-29', '2028-03-01']);
+  assert.equal(d[2].kWh, null);
+  assert.deepEqual(expandDays(null), []);
+});

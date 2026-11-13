@@ -1,5 +1,5 @@
 // Darstellung – nur DOM-Methoden und textContent, nie HTML-Strings mit Daten.
-import { formatNumber, formatDate, formatDateShort, daysBetween, relativeDays, formatDateTime, formatMonth, formatEuro } from './format.js';
+import { formatNumber, formatDate, formatDateShort, daysBetween, relativeDays, formatDateTime, formatMonth, formatEuro, expandDays, dayNumber, isoOfDay, isoWeek } from './format.js';
 import { periodChart } from './charts.js';
 
 export function el(tag, props = {}, ...children) {
@@ -71,6 +71,71 @@ export function renderMeter(dom, overview, pending, today, nowMs = Date.now()) {
   );
   dom.meterTiles.hidden = false;
   dom.dataAge.textContent = `Datenstand: ${formatDateTime(overview.generatedAt)}`;
+}
+
+/**
+ * Rückblick: die letzten 4 Kalenderwochen (Mo–So) – nur Fakten bis zur letzten Ablesung, keine Schätzung danach.
+ * Innerhalb eines Ablesezeitraums ist der Verbrauch nach Temperatur auf die Tage verteilt (Wochengrenzen).
+ * unit: 'm3' | 'kWh'; onToggle wechselt die Einheit (ganze Karte antippen).
+ */
+export function renderWeeks(dom, overview, unit, onToggle) {
+  const days = expandDays(overview && overview.insights && overview.insights.days);
+  let last = -1;
+  days.forEach((d, i) => d.covered > 0 && (last = i));
+  dom.weeksCard.hidden = last < 0;
+  if (last < 0) return;
+  const lastDate = days[last].date;
+  const byDate = new Map(days.map(d => [d.date, d]));
+  const today = overview.today || days[days.length - 1].date;
+  const n = dayNumber(today);
+  const monday = n - ((new Date(n * 86400000).getUTCDay() + 6) % 7);
+  const kwh = unit === 'kWh';
+  const weeks = [3, 2, 1, 0].map(i => {
+    const from = monday - 7 * i;
+    let m3 = 0;
+    let kWh = 0;
+    let measured = 0;
+    let lastIn = null;
+    for (let k = 0; k < 7; k++) {
+      const d = byDate.get(isoOfDay(from + k));
+      if (!d || !(d.covered > 0)) continue;
+      m3 += d.m3 || 0;
+      kWh += d.kWh || 0;
+      measured += d.covered;
+      lastIn = d.date;
+    }
+    return { from: isoOfDay(from), to: isoOfDay(from + 6), kw: isoWeek(isoOfDay(from)), m3, kWh, measured, lastIn };
+  });
+  const value = w => (kwh ? w.kWh : w.m3);
+  const max = Math.max(1e-9, ...weeks.map(value));
+  const fmtV = v => (kwh ? `${formatNumber(v, 0)}` : formatNumber(v, 1));
+  for (const s of dom.weeksUnit.children) s.classList.toggle('on', s.dataset.unit === (kwh ? 'kWh' : 'm3'));
+  dom.weeksBars.replaceChildren(
+    ...weeks.map(w => {
+      const has = w.measured > 0;
+      const partial = has && w.lastIn < w.to;
+      const bar = el('div', { class: 'wbar' });
+      bar.style.height = `${has ? Math.max(3, (value(w) / max) * 100) : 0}%`;
+      return el(
+        'div',
+        { class: `week${has ? '' : ' empty'}` },
+        el('span', { class: 'wval', text: has ? fmtV(value(w)) : '–' }),
+        el('div', { class: 'wtrack' }, bar),
+        el('span', { class: 'wkw', text: `KW ${w.kw}` }),
+        el('span', { class: 'wdates', text: has ? `${formatDateShort(w.from)}–${partial ? formatDateShort(w.lastIn) : formatDateShort(w.to)}` : 'keine Ablesung' })
+      );
+    })
+  );
+  const total = weeks.reduce((s, w) => s + value(w), 0);
+  dom.weeksSum.textContent = `4 Wochen: ${fmtV(total)} ${kwh ? 'kWh' : 'm³'} · abgelesen bis ${formatDate(lastDate)}`;
+  dom.weeksCard.onclick = onToggle;
+  dom.weeksCard.onkeydown = e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onToggle();
+    }
+  };
+  dom.weeksCard.setAttribute('aria-label', `Letzte 4 Wochen in ${kwh ? 'kWh' : 'Kubikmetern'} – antippen für ${kwh ? 'Kubikmeter' : 'kWh'}`);
 }
 
 export function renderIntervals(tbody, empty, intervals) {
@@ -145,15 +210,39 @@ function recommendationText(r) {
   return `Abschlag von ${euro0(r.current)} passt (ausgeglichen bei ${euro0(r.balanced)}, mit Puffer ${euro0(r.safe)})`;
 }
 
-/** Abrechnungszeiträume: laufende zuerst, dann die jüngsten beendeten. */
-export function renderPeriods(list, empty, periods) {
+/**
+ * Abrechnungszeiträume: laufende zuerst, dann die jüngsten beendeten.
+ * mode: 'long' (Jahresmodell) | 'season' („wenn du so weiterheizt wie diese Saison“); level: insights.level.
+ */
+export function renderPeriods(list, empty, periods, { mode = 'long', level = null, onMode = () => {} } = {}) {
   const order = { läuft: 0, beendet: 1, zukünftig: 2 };
   const sorted = periods.slice().sort((a, b) => order[a.status] - order[b.status] || (a.start < b.start ? 1 : -1));
   empty.hidden = sorted.length > 0;
-  list.replaceChildren(...sorted.map(renderPeriod));
+  list.replaceChildren(...sorted.map(p => renderPeriod(p, mode, level, onMode)));
 }
 
-function renderPeriod(p) {
+/** Satz zur Saison-Variante: wie anders heizt du diese Saison, worauf beruht das? */
+function seasonText(level) {
+  const d = level.factor - 1;
+  const how = Math.abs(d) < 0.03 ? 'etwa so viel wie' : `etwa ${formatNumber(Math.round(Math.abs(d) * 100), 0)} % ${d < 0 ? 'weniger' : 'mehr'} als`;
+  const basis = level.source === 'Saison'
+    ? `Modell neu geschätzt aus ${level.n} Ablesezeiträumen seit ${formatDate(level.from)}: Heizgrenze ${formatNumber(level.theta, 1)} °C`
+    : `Faktor aus ${level.n} Ablesezeiträumen seit ${formatDate(level.from)}, Heizgrenze wie im Jahresmodell`;
+  return `Diese Saison heizt du ${how} im Jahresmodell (bei gleichem Wetter). ${basis}. Prognose: so weiter, bei normalem Wetter.`;
+}
+
+function modeSwitch(mode, onMode) {
+  const seg = el('div', { class: 'seg', role: 'group', 'aria-label': 'Prognose-Grundlage' });
+  for (const [m, text] of [['long', 'Langfristig'], ['season', 'Diese Saison']]) {
+    seg.append(el('button', { type: 'button', 'aria-pressed': String(m === mode), text, onclick: () => onMode(m) }));
+  }
+  return seg;
+}
+
+function renderPeriod(p0, mode, level, onMode) {
+  const switchable = p0.status === 'läuft' && !!p0.forecastSeason && !!level;
+  const season = switchable && mode === 'season';
+  const p = season ? Object.assign({}, p0, { forecast: p0.forecastSeason }) : p0;
   const status = `${formatDate(p.start)}–${formatDate(p.end)} · ${STATUS_TEXT[p.status] || p.status}`;
   const head = el('div', { class: 'period-head' }, el('div', {}, el('h3', { text: p.name }), el('p', { class: 'muted small-text', text: status })));
   if (p.status === 'läuft') head.append(el('span', { class: 'pill pill-neutral', text: `Tag ${p.elapsedDays}/${p.totalDays}` }));
@@ -187,13 +276,18 @@ function renderPeriod(p) {
   if (p.status === 'läuft' && !f) notes.push('Für eine Prognose fehlt noch das Modell (siehe oben).');
   if (f && f.mainUncertainty) notes.push(`Größte Unsicherheit: ${UNCERTAINTY_TEXT[f.mainUncertainty]}.`);
   body.append(el('p', { class: 'muted small-text', text: notes.join(' ') }));
-  return el('div', { class: 'period' }, head, f ? periodChart(p) : null, body);
+  // Umschalter über Zahl und Diagramm – er ändert beides
+  const switchBox = switchable
+    ? el('div', { class: 'period-switch' }, modeSwitch(mode, onMode),
+      el('p', { class: 'muted small-text season-note', text: season ? seasonText(level) : 'Jahresmodell aus allen Ablesungen, bei normalem Wetter.' }))
+    : null;
+  return el('div', { class: 'period' }, head, switchBox, f ? periodChart(p) : null, body);
 }
 
 const RATING_CLASS = { grün: 'green', gelb: 'yellow', rot: 'red' };
 
 /** Modell & Verlässlichkeit (Ampel + Kennzahlen). */
-export function renderModel(textNode, factsNode, model, rating) {
+export function renderModel(textNode, factsNode, model, rating, level) {
   textNode.textContent = rating ? rating.text : 'Noch keine Daten.';
   textNode.className = `rating ${rating ? RATING_CLASS[rating.level] || '' : ''}`.trim();
   factsNode.replaceChildren();
@@ -204,6 +298,9 @@ export function renderModel(textNode, factsNode, model, rating) {
   fact('Heizgrenze', `${formatNumber(model.theta, 1)} °C (${model.thetaSource === 'Daten' ? 'aus deinen Ablesungen' : 'aus den Einstellungen'})`);
   fact('Grundlast', model.b >= 0.005 ? `${formatNumber(model.b, 2)} m³/Tag` : 'keine (nur Heizung)');
   fact('Grundlage', `${model.n} Ablesezeiträume${model.excluded ? ` (+${model.excluded} ausgeschlossen)` : ''}`);
+  if (level) {
+    fact('Diese Saison', `${formatNumber(level.aKWh, 1)} kWh je Heizgradtag, Heizgrenze ${formatNumber(level.theta, 1)} °C – ${level.source === 'Saison' ? 'neu geschätzt' : 'Faktor ' + formatNumber(level.factor, 2)} (${level.n} Zeiträume seit ${formatDate(level.from)})`);
+  }
 }
 
 /** Monatstabelle, neueste zuerst. */

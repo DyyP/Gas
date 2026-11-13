@@ -4,8 +4,8 @@
 // Neue Version: Der Browser prüft sw.js bei jedem Öffnen; BUILD (Prüfsumme aller Dateien, `node tools/stamp.mjs`)
 // macht jede Änderung an der App zu einer neuen sw.js → neuer Cache → die App lädt einmal neu.
 // Ausnahme config.js: Netz zuerst (die URL wird direkt auf GitHub geändert). Anfragen an Google fasst er nicht an.
-const VERSION = '1.2.1-m4'; // = APP_VERSION in js/version.js (wird getestet)
-const BUILD = '151457442908'; // Prüfsumme der Dateien – wird von tools/stamp.mjs gesetzt (CI prüft)
+const VERSION = '1.3.0-m5'; // = APP_VERSION in js/version.js (wird getestet)
+const BUILD = '807596f4b4a0'; // Prüfsumme der Dateien – wird von tools/stamp.mjs gesetzt (CI prüft)
 const CACHE = `gas-shell-${VERSION}-${BUILD}`;
 const SHELL = [
   './',

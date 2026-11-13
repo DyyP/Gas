@@ -66,6 +66,18 @@
         <p id="msg" class="msg" role="status" aria-live="polite"></p>
       </form>
 
+      <div id="weeksCard" class="card weeks" role="button" tabindex="0" hidden>
+        <div class="row">
+          <div>
+            <p class="kicker">Rückblick</p>
+            <h2 class="title">Letzte 4 Wochen</h2>
+          </div>
+          <span id="weeksUnit" class="unit-toggle" aria-hidden="true"><span data-unit="m3">m³</span><span data-unit="kWh">kWh</span></span>
+        </div>
+        <div id="weeksBars" class="weeks-bars"></div>
+        <p id="weeksSum" class="foot"></p>
+      </div>
+
       <div id="queueCard" class="card" hidden>
         <div class="row">
           <h2 id="queueTitle">Warteschlange</h2>
@@ -93,10 +105,9 @@
     <!-- Analyse -->
     <section id="view-analyse" class="view" aria-labelledby="tab-analyse" hidden>
       <p id="analyseEmpty" class="card muted" hidden>Für die Analyse braucht es Wetterdaten und mindestens drei Ablesezeiträume.</p>
-      <div id="aHeat" class="card" hidden></div>
       <div id="aMonths" class="card" hidden></div>
-      <div id="aDayCost" class="card" hidden></div>
       <div id="aCalendar" class="card" hidden></div>
+      <div id="aDayCost" class="card" hidden></div>
       <div id="aSeason" class="card" hidden></div>
       <div class="card">
         <p class="kicker">Daten</p>
